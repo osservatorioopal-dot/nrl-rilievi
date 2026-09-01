@@ -5,17 +5,26 @@
  * Google. Gestisce l'aggiornamento delle righe già presenti (upsert per ID),
  * così un'area di saggio modificata e risincronizzata non viene duplicata.
  *
- * INSTALLAZIONE
- * 1. Crea un nuovo foglio Google (es. "NRL Rilievi — dati").
- * 2. Estensioni > Apps Script, incolla questo file al posto di quello vuoto.
- * 3. Salva, poi Distribuisci > Nuova distribuzione > tipo "App web":
+ * INSTALLAZIONE (gia' eseguita per il foglio "NRL Rilievi - dati")
+ * 1. Crea un nuovo foglio Google e copia il suo ID dall'indirizzo, poi incollalo
+ *    in ID_FOGLIO qui sotto (oppure lascialo vuoto se incolli questo codice in
+ *    Estensioni > Apps Script del foglio stesso, cioe' in un progetto collegato).
+ * 2. Salva, poi Distribuisci > Nuova distribuzione > tipo "App web":
  *      - Esegui come: Me
  *      - Chi ha accesso: Chiunque
+ * 3. Autorizza l'accesso quando Google lo chiede (Avanzate > Apri ... non sicuro).
  * 4. Copia l'URL che termina con /exec e incollalo in app > Impostazioni.
  * ---------------------------------------------------------------------------
  */
 
 var CARTELLA_FOTO = '';   // opzionale: ID di una cartella Drive per le foto
+
+/* ID del foglio Google dei dati. Se valorizzato lo script funziona anche come
+   progetto autonomo (non collegato al foglio); se vuoto usa il foglio contenitore. */
+var ID_FOGLIO = '1saH8hb_BqJzmc34wSVtHCJ6NRqg8lG3HfOqk2XJ_pHo';
+function foglioDati() {
+  return ID_FOGLIO ? SpreadsheetApp.openById(ID_FOGLIO) : SpreadsheetApp.getActiveSpreadsheet();
+}
 
 /* ------------------------------------------------------------------ doGet */
 function doGet(e) {
@@ -28,7 +37,7 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var p = JSON.parse(e.postData.contents);
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = foglioDati();
     var righe = 0;
 
     righe += scriviAree(ss, p);
@@ -215,13 +224,19 @@ function json(o) {
 /* -------------------------------------------------- riepilogo (facoltativo)
    Menu > NRL > Aggiorna riepilogo: calcola le medie degli indicatori per
    comune e per categoria forestale in un foglio dedicato. */
+/* Con progetto autonomo il menu non compare nel foglio: la funzione
+   aggiornaRiepilogo() si lancia dall'editor Apps Script (pulsante Esegui)
+   oppure con un attivatore a tempo. Con progetto collegato al foglio,
+   il menu NRL compare normalmente. */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('NRL')
-    .addItem('Aggiorna riepilogo indicatori', 'aggiornaRiepilogo').addToUi();
+  try {
+    SpreadsheetApp.getUi().createMenu('NRL')
+      .addItem('Aggiorna riepilogo indicatori', 'aggiornaRiepilogo').addToUi();
+  } catch (e) {}
 }
 
 function aggiornaRiepilogo() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = foglioDati();
   var sh = ss.getSheetByName('Schede'); if (!sh) return;
   var dati = sh.getDataRange().getValues(); dati.shift();
   var acc = {};

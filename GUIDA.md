@@ -55,31 +55,48 @@ installati continuano a usare la versione in cache.
 5. Al primo avvio si crea l'utenza di amministrazione (nome, nome utente, password).
    Da Impostazioni → Utenti si aggiungono gli altri rilevatori.
 
-### 2.3 Backend di sincronizzazione (Google Sheets)
+### 2.3 Il backend di sincronizzazione è già attivo
 
-1. Crea un foglio Google, per esempio *NRL Rilievi — dati*.
-2. Estensioni → **Apps Script**; cancella il contenuto e incolla `Codice-AppsScript.gs`.
-3. Salva, poi **Distribuisci → Nuova distribuzione → App web**:
-   - *Esegui come*: **Me**
-   - *Chi ha accesso*: **Chiunque**
-4. Copia l'URL che finisce con `/exec`.
-5. Nell'app: ⚙ Impostazioni → incolla l'URL → **Salva** → **Prova la connessione**.
+Sull'account **osservatorio.opal@gmail.com** sono già stati creati e collegati:
 
-Il foglio si popola da solo con quattro schede:
+- il foglio **NRL Rilievi - dati** (Drive dell'associazione);
+- il progetto Apps Script **NRL Rilievi - sincronizzazione**, distribuito come
+  applicazione web (esegue come osservatorio.opal@gmail.com, accesso "Chiunque").
+
+**URL di sincronizzazione da incollare nell'app** (Impostazioni > URL dell'applicazione
+web Google Apps Script), su ogni telefono che effettua i rilievi:
+
+```
+https://script.google.com/macros/s/AKfycbwoFy-rUIsJEojblBEWmQWQC35VViqc7zhGQMpjv7AWhCAntmTR86pYeCxyzEzCbm8w/exec
+```
+
+Dopo averlo incollato: **Salva** > **Prova la connessione**. La risposta corretta è
+`{"ok":true,"servizio":"NRL Rilievi",...}`.
+
+L'impostazione è locale al dispositivo: va inserita una volta su ciascun telefono.
+Tratta l'indirizzo come una password: chi lo conosce può scrivere sul foglio.
+
+Il foglio si popola da solo con tre schede più una di riepilogo:
 
 | Foglio | Contenuto |
 |---|---|
 | `Aree_di_saggio` | una riga per area di saggio, con coordinate e caratteri stazionali |
 | `Schede` | una riga per scheda compilata, **con il valore dell'indicatore già calcolato** |
 | `Dettaglio_elementi` | una riga per ogni albero morto, tronco, pianta cavallettata, contatto ornitico |
-| `Riepilogo` | medie per indicatore (menu **NRL → Aggiorna riepilogo**) |
+| `Riepilogo` | medie per indicatore: si genera lanciando `aggiornaRiepilogo()` dall'editor Apps Script |
 
 La sincronizzazione è un *upsert*: se modifichi un rilievo già inviato e risincronizzi,
 la riga viene **aggiornata**, non duplicata.
 
 Per archiviare anche le fotografie: crea una cartella su Drive, copia il suo ID
-dall'URL e incollalo in `var CARTELLA_FOTO = '';` nella prima riga dello script;
-poi attiva l'opzione corrispondente nelle impostazioni dell'app.
+dall'URL e incollalo in `var CARTELLA_FOTO = '';` nella prima riga dello script
+(Apps Script > progetto NRL Rilievi - sincronizzazione), poi attiva l'opzione
+corrispondente nelle impostazioni dell'app e ridistribuisci il deployment.
+
+**Collegamento già verificato**: è stato inviato un rilievo di prova, il foglio ha
+registrato area di saggio, scheda (con indicatore 10,21 m³/ha) e i due elementi di
+dettaglio; le righe di prova sono poi state eliminate, per cui il foglio è pronto e
+vuoto.
 
 ---
 
