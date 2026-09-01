@@ -1,0 +1,17 @@
+{
+  "name": "NRL Rilievi — indicatori forestali",
+  "short_name": "NRL Rilievi",
+  "description": "Rilievo di campo degli indicatori di biodiversità forestale — Reg. (UE) 2024/1991, Allegato VI",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f4",
+  "theme_color": "#14532d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
