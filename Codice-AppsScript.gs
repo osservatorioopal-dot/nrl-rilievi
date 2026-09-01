@@ -19,6 +19,13 @@
 
 var CARTELLA_FOTO = '';   // opzionale: ID di una cartella Drive per le foto
 
+/* Elenco dei nomi utente autorizzati a inviare dati. Se lasciato vuoto accetta
+   qualunque invio. Poiché l'indirizzo di sincronizzazione è incorporato nell'app
+   pubblicata, compilarlo con i nomi utente dei rilevatori (es. ['gennaro','mrossi'])
+   è il modo più semplice per scartare invii estranei: l'elenco sta qui sul server
+   e non è visibile a chi legge il codice dell'app. */
+var RILEVATORI_AMMESSI = [];
+
 /* ID del foglio Google dei dati. Se valorizzato lo script funziona anche come
    progetto autonomo (non collegato al foglio); se vuoto usa il foglio contenitore. */
 var ID_FOGLIO = '1saH8hb_BqJzmc34wSVtHCJ6NRqg8lG3HfOqk2XJ_pHo';
@@ -37,6 +44,11 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var p = JSON.parse(e.postData.contents);
+
+    if (RILEVATORI_AMMESSI.length && RILEVATORI_AMMESSI.indexOf(String(p.utente)) < 0) {
+      return json({ ok: false, errore: 'Rilevatore non autorizzato: ' + p.utente });
+    }
+
     var ss = foglioDati();
     var righe = 0;
 

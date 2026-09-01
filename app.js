@@ -48,7 +48,21 @@ const DB = (() => {
   };
 })();
 
-/* ============================== 2. STATO ================================= */
+/* ========================= 2. CONFIGURAZIONE DI FABBRICA =================
+   L'indirizzo di sincronizzazione è già impostato nell'app: il rilevatore non
+   deve inserirlo a mano, gli basta accedere e iniziare a rilevare.
+   Resta modificabile da Impostazioni (per campagne o fogli diversi) e viene
+   riproposto automaticamente se il campo viene lasciato vuoto. */
+const SYNC_URL_PREDEFINITO =
+  'https://script.google.com/macros/s/AKfycbwoFy-rUIsJEojblBEWmQWQC35VViqc7zhGQMpjv7AWhCAntmTR86pYeCxyzEzCbm8w/exec';
+const CONFIG_PREDEFINITA = {
+  syncUrl: SYNC_URL_PREDEFINITO,
+  progetto: '',
+  autoSync: true,
+  syncFoto: false
+};
+
+/* ============================== 2b. STATO =============================== */
 const S = {
   utente: null, utenti: [], coeff: { ...COEFF_DEFAULT }, config: {},
   plots: [], plot: null, schede: {}, vista: 'login', dirty: false
@@ -68,7 +82,8 @@ async function sha256(txt) {
 /* ============================== 3. AVVIO ================================ */
 async function avvio() {
   S.utenti = (await DB.get('kv', 'utenti')) || [];
-  S.config = (await DB.get('kv', 'config')) || { syncUrl: '', progetto: '', autoSync: true };
+  S.config = Object.assign({}, CONFIG_PREDEFINITA, (await DB.get('kv', 'config')) || {});
+  if (!S.config.syncUrl) S.config.syncUrl = SYNC_URL_PREDEFINITO;   // vale anche per i dispositivi già installati
   const c = await DB.get('kv', 'coeff'); if (c) Object.assign(S.coeff, c);
   const specieOv = await DB.get('kv', 'specieOverride');
   if (specieOv) Object.entries(specieOv).forEach(([k, v]) => { if (SPECIE_MAP[k]) Object.assign(SPECIE_MAP[k], v); });
@@ -759,6 +774,8 @@ function modale(titolo, html) {
 function vistaImpostazioni() {
   return `<div class="wrap"><button class="link" data-a="home">← Aree di saggio</button>
   <div class="card"><h2>Sincronizzazione</h2>
+    <div class="nota">L'indirizzo del foglio di destinazione è già configurato nell'app: non serve modificarlo.
+      Cambialo solo per inviare i dati a un altro foglio; svuotando il campo torna quello predefinito.</div>
     <label>URL dell'applicazione web Google Apps Script
       <input id="c-url" value="${esc(S.config.syncUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec"></label>
     <label>Nome del progetto / campagna<input id="c-prog" value="${esc(S.config.progetto || '')}"></label>
@@ -799,7 +816,7 @@ function vistaImpostazioni() {
 }
 
 async function salvaConfig() {
-  S.config.syncUrl = val('c-url').trim();
+  S.config.syncUrl = val('c-url').trim() || SYNC_URL_PREDEFINITO;
   S.config.progetto = val('c-prog').trim();
   S.config.autoSync = document.getElementById('c-auto').checked;
   S.config.syncFoto = document.getElementById('c-foto').checked;

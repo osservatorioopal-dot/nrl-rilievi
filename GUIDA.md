@@ -54,6 +54,7 @@ installati continuano a usare la versione in cache.
    file per l'uso offline. Da lì in avanti funziona anche in modalità aereo.
 5. Al primo avvio si crea l'utenza di amministrazione (nome, nome utente, password).
    Da Impostazioni → Utenti si aggiungono gli altri rilevatori.
+6. Nient'altro: la sincronizzazione è già configurata dentro l'app (vedi 2.3).
 
 ### 2.3 Il backend di sincronizzazione è già attivo
 
@@ -63,18 +64,30 @@ Sull'account **osservatorio.opal@gmail.com** sono già stati creati e collegati:
 - il progetto Apps Script **NRL Rilievi - sincronizzazione**, distribuito come
   applicazione web (esegue come osservatorio.opal@gmail.com, accesso "Chiunque").
 
-**URL di sincronizzazione da incollare nell'app** (Impostazioni > URL dell'applicazione
-web Google Apps Script), su ogni telefono che effettua i rilievi:
+**Non c'è nulla da configurare sui telefoni**: l'indirizzo di sincronizzazione è
+incorporato nell'app pubblicata. Il rilevatore installa l'app, crea la sua utenza e
+inizia a rilevare; al ritorno della connessione i dati partono da soli. In Impostazioni
+il campo appare già compilato e serve solo se un domani vorrai inviare i dati a un
+foglio diverso — svuotandolo torna quello predefinito.
+
+L'indirizzo, per riferimento:
 
 ```
 https://script.google.com/macros/s/AKfycbwoFy-rUIsJEojblBEWmQWQC35VViqc7zhGQMpjv7AWhCAntmTR86pYeCxyzEzCbm8w/exec
 ```
 
-Dopo averlo incollato: **Salva** > **Prova la connessione**. La risposta corretta è
-`{"ok":true,"servizio":"NRL Rilievi",...}`.
+Essendo dentro l'app pubblicata, l'indirizzo è leggibile da chiunque apra il codice
+della pagina: chi lo trovasse potrebbe **scrivere** righe sul foglio (non leggerlo, non
+cancellarlo). Se vuoi chiudere anche questa porta, apri il progetto Apps Script e
+compila l'elenco dei nomi utente dei rilevatori:
 
-L'impostazione è locale al dispositivo: va inserita una volta su ciascun telefono.
-Tratta l'indirizzo come una password: chi lo conosce può scrivere sul foglio.
+```js
+var RILEVATORI_AMMESSI = ['gennaro', 'mrossi'];   // vuoto = accetta tutti
+```
+
+poi ridistribuisci il deployment (Esegui il deployment > Gestisci deployment > matita >
+Versione: Nuova versione). L'elenco sta sul server e non è visibile dall'app: gli invii
+con un nome utente diverso vengono rifiutati.
 
 Il foglio si popola da solo con tre schede più una di riepilogo:
 
