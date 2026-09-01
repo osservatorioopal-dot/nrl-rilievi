@@ -31,18 +31,19 @@ già pubblicata su GitHub Pages.
 
 ## 2. Installazione
 
-### 2.1 Pubblicazione dell'app (una volta sola)
+### 2.1 L'app è già pubblicata
 
-Serve un indirizzo **https**: il GPS, la fotocamera e il funzionamento offline
-non sono attivabili su http. La via più rapida e gratuita è GitHub Pages.
+**Indirizzo dell'app: https://osservatorioopal-dot.github.io/nrl-rilievi/**
 
-1. Crea un repository pubblico su GitHub, per esempio `nrl-rilievi`.
-2. Carica tutto il contenuto della cartella (index.html deve stare nella radice).
-3. Settings → Pages → Source: *Deploy from a branch*, branch `main`, cartella `/root`.
-4. Dopo qualche minuto l'app è su `https://<tuo-utente>.github.io/nrl-rilievi/`.
+È ospitata su GitHub Pages (https, gratuito) dal repository pubblico
+`osservatorioopal-dot/nrl-rilievi`. Il codice è visibile a chiunque; i dati dei
+rilievi **non** stanno lì: restano sul telefono e vanno sul tuo foglio Google.
 
-Alternative equivalenti: Netlify (trascinando la cartella su app.netlify.com/drop),
-Cloudflare Pages, o qualunque spazio web con https.
+Per aggiornare l'app dopo una modifica: apri il repository su GitHub, entra nel file
+da cambiare, matita "Edit", incolla la nuova versione e "Commit changes" — oppure
+"Add file → Upload files" trascinando i file modificati. Ricorda di incrementare
+`const CACHE = 'nrl-rilievi-v1'` in `sw.js` (v2, v3, …), altrimenti i telefoni già
+installati continuano a usare la versione in cache.
 
 ### 2.2 Installazione sul telefono del rilevatore
 
