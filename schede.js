@@ -72,7 +72,7 @@ const SCHEDE = [
   colore: '#475569',
   sezioni: [
     { t: 'Identificazione', f: [
-      { k: 'codice', l: 'Codice area di saggio', t: 'text', req: true, help: 'Es. AdS-001 — deve essere univoco nel progetto' },
+      { k: 'codice', l: 'Codice area di saggio', t: 'text', req: true, help: 'Scelto tra i punti pianificati del progetto QGIS/QField (o inserito a mano); deve essere univoco nel progetto' },
       { k: 'progetto', l: 'Progetto / campagna di rilievo', t: 'text' },
       { k: 'data', l: 'Data del rilievo', t: 'date', req: true },
       { k: 'ora_inizio', l: 'Ora di inizio', t: 'time' },

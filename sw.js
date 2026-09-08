@@ -1,7 +1,7 @@
 /* Service worker — NRL Rilievi
    Strategia: cache-first sui file dell'applicazione (l'app deve funzionare
    integralmente senza rete), network-first sulle richieste di sincronizzazione. */
-const CACHE = 'nrl-rilievi-v2';
+const CACHE = 'nrl-rilievi-v4';
 const FILE = [
   './', './index.html', './dati.js', './schede.js', './app.js',
   './manifest.webmanifest', './icon-192.png', './icon-512.png'
@@ -19,8 +19,9 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  // le chiamate al backend non vanno mai in cache
+  // le chiamate al backend e l'elenco dei punti pianificati non vanno mai in cache (network-first)
   if (url.hostname.includes('script.google.com') || e.request.method !== 'GET') return;
+  if (url.pathname.endsWith('punti_pianificati.geojson')) return;
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
       if (r.ok && url.origin === location.origin) {

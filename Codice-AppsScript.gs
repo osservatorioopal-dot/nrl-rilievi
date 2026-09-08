@@ -26,6 +26,11 @@ var CARTELLA_FOTO = '';   // opzionale: ID di una cartella Drive per le foto
    e non è visibile a chi legge il codice dell'app. */
 var RILEVATORI_AMMESSI = [];
 
+/* Chiave di lettura per l'esportazione CSV/JSON verso QGIS (doGet ...?formato=csv&foglio=Aree_di_saggio&token=...).
+   Senza chiave, o con chiave errata, il servizio non restituisce dati. Cambiarla a piacere (e nello script
+   03_SCRIPT/aggiorna_da_foglio.py del progetto QGIS). Vuota = esportazione disattivata. */
+var TOKEN_LETTURA = 'qgis-cfbc7d24850b8ae49d8afa38';
+
 /* ID del foglio Google dei dati. Se valorizzato lo script funziona anche come
    progetto autonomo (non collegato al foglio); se vuoto usa il foglio contenitore. */
 var ID_FOGLIO = '1saH8hb_BqJzmc34wSVtHCJ6NRqg8lG3HfOqk2XJ_pHo';
@@ -35,8 +40,26 @@ function foglioDati() {
 
 /* ------------------------------------------------------------------ doGet */
 function doGet(e) {
-  return json({ ok: true, servizio: 'NRL Rilievi', versione: 1, ora: new Date().toISOString() });
+  var p = (e && e.parameter) || {};
+  if (p.formato === 'csv' || p.formato === 'json') return esporta(p);
+  return json({ ok: true, servizio: 'NRL Rilievi', versione: 2, ora: new Date().toISOString() });
 }
+
+/* Esportazione di lettura per QGIS: ?formato=csv|json&foglio=Aree_di_saggio|Schede|Dettaglio_elementi&token=CHIAVE
+   (il progetto QGIS la usa tramite lo script aggiorna_da_foglio.py, che segue il reindirizzamento di Google). */
+function esporta(p) {
+  if (!TOKEN_LETTURA || String(p.token) !== TOKEN_LETTURA) return testo('token non valido');
+  var nome = p.foglio || 'Aree_di_saggio';
+  var sh = foglioDati().getSheetByName(nome);
+  if (!sh) return testo('foglio non trovato: ' + nome);
+  var v = sh.getDataRange().getDisplayValues();
+  if (p.formato === 'json') return json({ ok: true, foglio: nome, intestazioni: v[0] || [], righe: v.slice(1) });
+  var csv = v.map(function (r) {
+    return r.map(function (c) { return '"' + String(c === null || c === undefined ? '' : c).replace(/"/g, '""') + '"'; }).join(',');
+  }).join('\r\n');
+  return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
+}
+function testo(t) { return ContentService.createTextOutput(t).setMimeType(ContentService.MimeType.TEXT); }
 
 /* ----------------------------------------------------------------- doPost */
 function doPost(e) {
@@ -71,7 +94,9 @@ var COL_AREE = ['id', 'codice', 'progetto', 'data', 'comune', 'localita', 'local
   'quota', 'esposizione', 'pendenza', 'giacitura', 'forma_ads', 'raggio_m', 'superficie_m2',
   'categoria_forestale', 'forma_governo', 'stadio', 'copertura_pct', 'eta_stimata', 'ultimo_intervento',
   'natura2000', 'codice_sito', 'habitat', 'disturbi', 'rilevatore', 'nome_rilevatore', 'stato',
-  'creato', 'modificato', 'sincronizzato'];
+  'creato', 'modificato', 'sincronizzato',
+  // colonne del piano di campionamento (integrazione QGIS/QField, app v1.1)
+  'ads_pianificata', 'strato', 'tipologia_forestale', 'ruolo', 'punto_ascolto', 'lat_pian', 'lon_pian', 'x_pian', 'y_pian', 'scostamento_m'];
 
 function scriviAree(ss, p) {
   var sh = foglio(ss, 'Aree_di_saggio', COL_AREE);
@@ -86,6 +111,10 @@ function scriviAree(ss, p) {
       d.ultimo_intervento, d.natura2000 ? 'SI' : 'NO', d.cod_sito, d.habitat,
       (d.disturbi || []).join(', '), pl.utente, p.nomeUtente, pl.stato, pl.creato, pl.modificato,
       new Date().toISOString()];
+    var q = pl.pianificato || {};
+    riga = riga.concat([q.ads_id || '', q.strato || '', q.tipologia_forestale || '', q.ruolo || '', q.punto_ascolto ? 1 : 0,
+      q.lat_pian || '', q.lon_pian || '', q.x_pian || '', q.y_pian || '',
+      (q.lat_pian && g.lat) ? Math.round(distanzaM(g.lat, g.lon, q.lat_pian, q.lon_pian)) : '']);
     upsert(sh, idx, pl.id, riga); n++;
   });
   return n;
@@ -172,8 +201,19 @@ function foglio(ss, nome, intestazioni) {
     sh.getRange(1, 1, 1, intestazioni.length).setValues([intestazioni])
       .setFontWeight('bold').setBackground('#14532d').setFontColor('#ffffff');
     sh.setFrozenRows(1);
+  } else if (sh.getLastColumn() < intestazioni.length) {
+    // foglio creato da una versione precedente: aggiunge le nuove colonne in coda
+    var da = sh.getLastColumn();
+    sh.getRange(1, da + 1, 1, intestazioni.length - da).setValues([intestazioni.slice(da)])
+      .setFontWeight('bold').setBackground('#14532d').setFontColor('#ffffff');
   }
   return sh;
+}
+
+function distanzaM(lat1, lon1, lat2, lon2) {
+  var R = 6371000, r = Math.PI / 180, dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
+  var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 function indice(sh) {

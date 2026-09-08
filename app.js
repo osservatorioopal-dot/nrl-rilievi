@@ -65,8 +65,11 @@ const CONFIG_PREDEFINITA = {
 /* ============================== 2b. STATO =============================== */
 const S = {
   utente: null, utenti: [], coeff: { ...COEFF_DEFAULT }, config: {},
-  plots: [], plot: null, schede: {}, vista: 'login', dirty: false
+  plots: [], plot: null, schede: {}, vista: 'login', dirty: false,
+  pianificati: [], pianificatiAgg: null, ultimaPos: null, adsRichiesta: null, mostraPianificati: true, codiceManuale: false
 };
+/* File dei punti di campionamento pianificati (stessa cartella dell'app, generato dal progetto QGIS) */
+const FILE_PIANIFICATI = 'punti_pianificati.geojson';
 window.COEFF = S.coeff;
 
 const uid = (p = '') => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -90,7 +93,16 @@ async function avvio() {
   const sess = sessionStorage.getItem('nrl_utente');
   if (sess && S.utenti.find(u => u.u === sess)) S.utente = S.utenti.find(u => u.u === sess);
   await caricaPlots();
+  S.pianificati = (await DB.get('kv', 'pianificati')) || [];
+  S.pianificatiAgg = (await DB.get('kv', 'pianificatiAgg')) || null;
+  // apertura diretta di un'area di saggio da QField (…/?ads=GM-LEC-01)
+  try {
+    const qs = new URLSearchParams(location.search);
+    const richiesta = qs.get('ads') || (location.hash.startsWith('#ads=') ? decodeURIComponent(location.hash.slice(5)) : null);
+    if (richiesta) { S.adsRichiesta = richiesta.trim(); history.replaceState(null, '', location.pathname); }
+  } catch (e) {}
   render();
+  aggiornaPianificati(true);
   window.addEventListener('online', aggiornaStatoRete);
   window.addEventListener('offline', aggiornaStatoRete);
   aggiornaStatoRete();
@@ -117,6 +129,7 @@ function vai(vista, param) { S.vista = vista; S.param = param; window.scrollTo(0
 function render() {
   const app = document.getElementById('app');
   if (!S.utente) return app.innerHTML = S.utenti.length ? vistaLogin() : vistaPrimoAvvio(), bind();
+  if (S.adsRichiesta) { const c = S.adsRichiesta; S.adsRichiesta = null; setTimeout(() => apriAdsCodice(c), 0); }
   let html = '';
   switch (S.vista) {
     case 'plot': html = vistaPlot(); break;
@@ -183,17 +196,202 @@ function vistaHome() {
       <div class="stat"><b>${S.plots.filter(p => !p.sync).length}</b><span>da sincronizzare</span></div>
       <div class="stat clic" data-a="riepilogo"><b>↗</b><span>riepilogo indicatori</span></div>
     </div>
-    ${lista.length ? lista.map(cardPlot).join('') : `<div class="vuoto">Nessuna area di saggio.<br>Premi <b>+ Nuova area di saggio</b> per iniziare il rilievo.</div>`}
+    ${sezionePianificati(q)}
+    ${lista.length ? lista.map(cardPlot).join('') : `<div class="vuoto">Nessuna area di saggio.<br>Premi <b>+ Nuova area di saggio</b> per iniziare il rilievo${S.pianificati.length ? ', oppure scegli un punto pianificato qui sopra' : ''}.</div>`}
   </div>`;
 }
 
+/* ---------- punti di campionamento pianificati (progetto QGIS / QField) ---------- */
+function pianificatiDaRilevare() {
+  const fatti = new Set(S.plots.map(p => (p.codice || '').toUpperCase()));
+  return S.pianificati.filter(f => !fatti.has((f.ads_id || '').toUpperCase()));
+}
+function distanzaM(lat1, lon1, lat2, lon2) {
+  const R = 6371000, r = Math.PI / 180, dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function fmtDist(m) { return m == null ? '' : (m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'); }
+function sezionePianificati(q) {
+  if (!S.pianificati.length) return '';
+  let lista = pianificatiDaRilevare().filter(f => !q || `${f.ads_id} ${f.tipologia_forestale || ''} ${f.comune || ''} ${f.strato || ''}`.toLowerCase().includes(q));
+  if (S.ultimaPos) lista.forEach(f => f._d = distanzaM(S.ultimaPos.lat, S.ultimaPos.lon, f.lat_pian, f.lon_pian));
+  lista.sort((a, b) => S.ultimaPos ? (a._d - b._d) : String(a.ads_id).localeCompare(String(b.ads_id)));
+  const tot = pianificatiDaRilevare().length;
+  const mostra = S.mostraPianificati ? lista.slice(0, 40) : [];
+  return `<div class="card pian">
+    <div class="plot-h"><div><b>Punti pianificati da rilevare: ${tot} / ${S.pianificati.length}</b>
+      <div class="muted small">${S.pianificatiAgg ? 'aggiornati il ' + new Date(S.pianificatiAgg).toLocaleDateString('it-IT') : 'elenco locale'}${S.ultimaPos ? ' · ordinati per distanza dalla tua posizione' : ''}</div></div>
+      <div class="azioni" style="margin:0"><button data-a="pos-pian" title="ordina per distanza">📡 Vicini</button><button data-a="toggle-pian">${S.mostraPianificati ? 'Nascondi' : 'Mostra'}</button></div></div>
+    ${mostra.map(f => `<div class="pian-riga">
+      <div><b>${esc(f.ads_id)}</b> <span class="badge">${esc(f.ruolo || '')}</span>${f.punto_ascolto ? ' <span class="badge ok">ascolto</span>' : ''}
+        <div class="muted small">${esc(f.tipologia_forestale || '')}${f.comune ? ' · ' + esc(f.comune) : ''}${f._d != null ? ' · <b>' + fmtDist(f._d) + '</b>' : ''}</div></div>
+      <div class="pian-az"><a class="btn-link" href="geo:${f.lat_pian},${f.lon_pian}?q=${f.lat_pian},${f.lon_pian}(${encodeURIComponent(f.ads_id)})">🧭</a><button class="primario" data-a="crea-da-pian" data-id="${esc(f.ads_id)}">Apri</button></div>
+    </div>`).join('')}
+    ${S.mostraPianificati && lista.length > 40 ? `<div class="muted small">… altri ${lista.length - 40}: usa la ricerca.</div>` : ''}
+  </div>`;
+}
+async function aggiornaPianificati(silenzioso) {
+  if (!navigator.onLine) { if (!silenzioso) avviso('Nessuna connessione: resta l\'elenco locale.'); return; }
+  try {
+    const r = await fetch(FILE_PIANIFICATI + '?v=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const n = await importaPianificati(await r.json(), 'server');
+    if (!silenzioso) avviso(`Elenco aggiornato: ${n} punti pianificati.`);
+  } catch (e) { if (!silenzioso) avviso('Elenco non disponibile: ' + e.message); }
+}
+async function importaPianificati(gj, origine) {
+  const feats = (gj && gj.features) || [];
+  const out = feats.map(f => {
+    const p = f.properties || {}; const c = (f.geometry && f.geometry.coordinates) || [];
+    return { ...p, ads_id: p.ads_id || p.codice, lat_pian: p.lat_pian != null ? +p.lat_pian : +c[1], lon_pian: p.lon_pian != null ? +p.lon_pian : +c[0] };
+  }).filter(f => f.ads_id && isFinite(f.lat_pian) && isFinite(f.lon_pian));
+  if (!out.length) throw new Error('nessun punto valido nel file');
+  S.pianificati = out; S.pianificatiAgg = adesso();
+  await DB.put('kv', S.pianificati, 'pianificati'); await DB.put('kv', S.pianificatiAgg, 'pianificatiAgg');
+  const n = await agganciaEsistenti(); if (n) { await caricaPlots(); }
+  if (S.vista === 'home' || S.vista === 'impostazioni') render();
+  return out.length;
+}
+function posizionePianificati() {
+  if (!navigator.geolocation) return avviso('Geolocalizzazione non disponibile.');
+  avviso('Rilevo la posizione…');
+  navigator.geolocation.getCurrentPosition(pos => { S.ultimaPos = { lat: pos.coords.latitude, lon: pos.coords.longitude, ts: Date.now() }; render(); },
+    e => avviso('GPS non disponibile: ' + e.message), { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+}
+function modaleCollega() {
+  const p = S.plot; if (!p) return;
+  const g = p.data && p.data.gps;
+  if (g && g.lat && !S.ultimaPos) S.ultimaPos = { lat: g.lat, lon: g.lon, ts: Date.now() };
+  modale(`Collega ${esc(p.codice || '')} a un punto pianificato`,
+    `<p class="muted small">Il codice dell'area di saggio diventa quello del punto scelto; i campi vuoti dell'anagrafica vengono precompilati dal piano. Le schede già compilate restano.</p>
+     <label>Punto pianificato<select id="sel-collega">${opzioniCodice(p, '').replace('<option value="__manuale__">Altro codice (inserimento manuale)…</option>', '')}</select></label>
+     <div class="azioni"><button class="primario" data-a="conferma-collega">Collega</button></div>`);
+}
+async function confermaCollega() {
+  const sel = document.getElementById('sel-collega'); const cod = sel ? sel.value : '';
+  const q = pianificatoPerCodice(cod);
+  if (!q) return avviso('Scegli un punto pianificato.');
+  if (plotPerCodice(cod, S.plot.id)) return avviso('Codice già usato da un\'altra area di saggio.');
+  await collegaPianificato(S.plot, q, true);
+  document.querySelectorAll('.modale').forEach(m => m.remove());
+  await caricaPlots(); S.plot = S.plots.find(x => x.id === S.plot.id) || S.plot;
+  avviso(`Area di saggio collegata al punto ${q.ads_id}.`); vai('plot');
+}
+/* apre (o crea dal piano) l'area di saggio con un dato codice: usato dal link QField …/?ads=CODICE */
+async function apriAdsCodice(codice) {
+  const cod = String(codice || '').trim(); if (!cod) return;
+  const p = S.plots.find(x => (x.codice || '').toUpperCase() === cod.toUpperCase());
+  if (p) return apriPlot(p.id);
+  const pian = S.pianificati.find(f => String(f.ads_id).toUpperCase() === cod.toUpperCase());
+  if (!pian && !confirm(`L'area di saggio ${cod} non è tra i punti pianificati. Crearla comunque?`)) return;
+  return nuovoPlot(cod, pian || null);
+}
+function pianificatoPerCodice(cod) {
+  const c = String(cod || '').trim().toUpperCase();
+  return c ? S.pianificati.find(f => String(f.ads_id).toUpperCase() === c) || null : null;
+}
+function plotPerCodice(cod, escludiId) {
+  const c = String(cod || '').trim().toUpperCase();
+  return c ? S.plots.find(p => p.id !== escludiId && (p.codice || '').toUpperCase() === c) || null : null;
+}
+function datiDaPianificato(pian) {
+  const cat = CATEGORIA_DA_STRATO[String(pian.strato || '').split('-').pop()];
+  return { progetto: S.config.progetto || pian.progetto || 'BIORESTORE-MED - monitoraggio NRL Gravine di Matera / Valle del Basento',
+    comune: pian.comune || '', provincia: pian.provincia || 'MT', localita: pian.tipologia_forestale || '',
+    natura2000: !!pian.sito_n2000, cod_sito: pian.sito_n2000 || '', habitat: pian.habitat_atteso || '', categoria: cat || '', tipo_rilievo: 'Primo rilievo' };
+}
+function riferimentoPianificato(pian) {
+  return { ads_id: pian.ads_id, lat_pian: +pian.lat_pian, lon_pian: +pian.lon_pian, x_pian: pian.x_pian, y_pian: pian.y_pian, strato: pian.strato || '',
+    tipologia_forestale: pian.tipologia_forestale || '', ruolo: pian.ruolo || '', punto_ascolto: pian.punto_ascolto ? 1 : 0, sito_n2000: pian.sito_n2000 || '' };
+}
+/* collega un'area di saggio (plot) a un punto pianificato: codice, riferimento e precompilazione dei campi vuoti */
+async function collegaPianificato(p, pian, salva) {
+  p.codice = pian.ads_id;
+  p.pianificato = riferimentoPianificato(pian);
+  p.data = p.data || {};
+  p.data.codice = pian.ads_id;
+  const def = datiDaPianificato(pian);
+  Object.keys(def).forEach(k => { if (p.data[k] === undefined || p.data[k] === '' || p.data[k] === null || p.data[k] === false) p.data[k] = def[k]; });
+  p.modificato = adesso(); p.sync = false;
+  if (salva) {
+    await DB.put('plots', p);
+    const sch = (await DB.byIndex('schede', 'plotId', p.id)).find(s => s.schedaId === 'anagrafica');
+    if (sch) { sch.data = { ...(sch.data || {}), ...p.data }; sch.modificato = adesso(); sch.sync = false; await DB.put('schede', sch); if (S.plot && S.plot.id === p.id) S.schede['anagrafica'] = sch; }
+  }
+}
+/* dopo un aggiornamento del piano: aggancia le AdS gia' create il cui codice coincide con un punto pianificato */
+async function agganciaEsistenti() {
+  let n = 0;
+  for (const p of S.plots) {
+    if (p.pianificato) continue;
+    const q = pianificatoPerCodice(p.codice);
+    if (q) { await collegaPianificato(p, q, true); n++; }
+  }
+  return n;
+}
+/* stato del legame codice <-> piano, usato nell'anagrafica e nelle card */
+function statoCodice(p, codice) {
+  const cod = String(codice || p.codice || '').trim();
+  if (!cod) return { cls: 'warn', txt: 'codice mancante' };
+  const doppio = plotPerCodice(cod, p.id);
+  if (doppio) return { cls: 'err', txt: `codice già usato da un'altra area di saggio` };
+  const q = pianificatoPerCodice(cod);
+  if (q) return { cls: 'ok', txt: `collegata al punto pianificato ${q.ads_id} · ${q.tipologia_forestale || ''}${q.comune ? ' · ' + q.comune : ''}` };
+  if (S.pianificati.length) return { cls: 'warn', txt: 'codice non presente nel piano di campionamento (AdS fuori piano)' };
+  return { cls: '', txt: '' };
+}
+function opzioniCodice(p, corrente) {
+  const usati = new Set(S.plots.filter(x => x.id !== p.id).map(x => (x.codice || '').toUpperCase()));
+  const lista = S.pianificati.filter(f => !usati.has(String(f.ads_id).toUpperCase()));
+  if (S.ultimaPos) lista.forEach(f => f._d = distanzaM(S.ultimaPos.lat, S.ultimaPos.lon, f.lat_pian, f.lon_pian));
+  lista.sort((a, b) => S.ultimaPos ? (a._d - b._d) : String(a.ads_id).localeCompare(String(b.ads_id)));
+  const cur = String(corrente || '').trim();
+  const opts = lista.map(f => `<option value="${esc(f.ads_id)}" ${f.ads_id === cur ? 'selected' : ''}>${esc(f.ads_id)} — ${esc(f.tipologia_forestale || '')}${f.comune ? ' (' + esc(f.comune) + ')' : ''}${f._d != null ? ' · ' + fmtDist(f._d) : ''}</option>`);
+  const inPiano = !!pianificatoPerCodice(cur);
+  return `<option value="">— scegli il punto pianificato —</option>${cur && !inPiano ? `<option value="${esc(cur)}" selected>${esc(cur)} (codice fuori piano)</option>` : ''}${opts.join('')}<option value="__manuale__">Altro codice (inserimento manuale)…</option>`;
+}
+async function selezionaCodice(v) {
+  if (v === '__manuale__') { S.codiceManuale = true; return ridisegna(); }
+  const p = S.plot; if (!p) return;
+  const q = pianificatoPerCodice(v);
+  const d = datiCorrenti();
+  d.codice = v;
+  if (q) {
+    p.pianificato = riferimentoPianificato(q);
+    const def = datiDaPianificato(q);
+    Object.keys(def).forEach(k => { if (d[k] === undefined || d[k] === '' || d[k] === null || d[k] === false) d[k] = def[k]; });
+  } else if (v) {
+    p.pianificato = null;
+  }
+  setVal('codice', v);
+  ridisegna();
+}
+const CATEGORIA_DA_STRATO = { LEC: 'Boschi a prevalenza di leccio', FRA: 'Boschi di altre latifoglie', CON: 'Rimboschimenti di conifere', MAC: 'Macchia mediterranea alta',
+  RIP: 'Boschi igrofili ripariali', TAM: 'Boschi igrofili ripariali', PIN: 'Pinete di pini mediterranei' };
+
+function badgePiano(p) {
+  if (!S.pianificati.length) return '';
+  const st = statoCodice(p);
+  if (st.cls === 'ok') return `<span class="badge ok" title="${esc(st.txt)}">piano ✓</span>`;
+  if (st.cls === 'err') return `<span class="badge err" title="${esc(st.txt)}">codice doppio</span>`;
+  return `<span class="badge warn" title="${esc(st.txt)}">fuori piano</span>`;
+}
+function infoPianificato(p) {
+  const q = p.pianificato; if (!q) return S.pianificati.length ? `<div class="muted small">⚠ non collegata a un punto pianificato</div>` : '';
+  const g = p.data && p.data.gps;
+  const d = g && g.lat ? distanzaM(g.lat, g.lon, q.lat_pian, q.lon_pian) : null;
+  return `<div class="muted small">📍 pianificato ${q.lat_pian.toFixed(5)}, ${q.lon_pian.toFixed(5)}${q.strato ? ' · ' + esc(q.strato) : ''}${d != null ? ` · centro rilevato a <b class="${d > 30 ? 'warn-t' : 'ok-t'}">${fmtDist(d)}</b> dal punto` : ''}
+    <a class="btn-link" href="geo:${q.lat_pian},${q.lon_pian}?q=${q.lat_pian},${q.lon_pian}(${encodeURIComponent(p.codice || '')})">🧭 naviga</a></div>`;
+}
 function cardPlot(p) {
   const n = p.schedeCompilate || 0;
   return `<div class="card plot" data-a="apri-plot" data-id="${p.id}">
     <div class="plot-h">
       <div><div class="plot-cod">${esc(p.codice || 'senza codice')}</div>
-      <div class="muted">${esc(p.data.comune || '—')}${p.data.localita ? ' · ' + esc(p.data.localita) : ''} · ${esc(p.data.data || '')}</div></div>
+      <div class="muted">${esc(p.data.comune || '—')}${p.data.localita ? ' · ' + esc(p.data.localita) : ''} · ${esc(p.data.data || '')}</div>${infoPianificato(p)}</div>
       <div class="badges">
+        ${badgePiano(p)}
         <span class="badge ${p.sync ? 'ok' : 'warn'}">${p.sync ? 'sincronizzata' : 'locale'}</span>
         <span class="badge">${n}/8 schede</span>
       </div>
@@ -222,8 +420,10 @@ function vistaPlot() {
     <div class="card testata">
       <h2>${esc(p.codice || 'Nuova area di saggio')}</h2>
       <div class="muted">${esc(p.data.comune || 'comune non indicato')} · ${esc(p.data.categoria || 'categoria non indicata')} · ${esc(p.data.data || '')}</div>
+      ${infoPianificato(p)}
       <div class="azioni">
         <button data-a="apri-scheda" data-id="anagrafica">Modifica anagrafica</button>
+        ${S.pianificati.length ? `<button data-a="collega-pian">${p.pianificato ? 'Cambia punto pianificato' : '🔗 Collega a punto pianificato'}</button>` : ''}
         <button data-a="riepilogo-plot">Riepilogo indicatori</button>
         <button data-a="esporta-plot">Esporta</button>
         <button class="pericolo" data-a="elimina-plot">Elimina</button>
@@ -291,7 +491,18 @@ function campo(f, d, sc) {
   const lab = t => `<label class="campo" data-k="${f.k}"><span class="lab">${esc(f.l)}${req}${f.u ? ` <em>(${esc(f.u)})</em>` : ''}</span>${t}${help}</label>`;
   switch (f.t) {
     case 'info': return `<div class="nota">${esc(f.l)}</div>`;
-    case 'text': return lab(`<input data-f="${f.k}" value="${esc(v)}">`);
+    case 'text': {
+      if (f.k === 'codice' && sc && sc.id === 'anagrafica' && S.plot) {
+        const st = statoCodice(S.plot, v);
+        const stato = st.txt ? `<div class="help stato-cod ${st.cls}">${st.cls === 'ok' ? '✓' : '⚠'} ${esc(st.txt)}</div>` : '';
+        if (S.pianificati.length && !S.codiceManuale) {
+          return lab(`<select data-codice="1">${opzioniCodice(S.plot, v)}</select>${stato}`);
+        }
+        const torna = S.pianificati.length ? `<button type="button" class="link" data-a="codice-piano">↩ scegli dal piano di campionamento</button>` : '';
+        return lab(`<input data-f="${f.k}" value="${esc(v)}" placeholder="Es. GM-LEC-01">${stato}${torna}`);
+      }
+      return lab(`<input data-f="${f.k}" value="${esc(v)}">`);
+    }
     case 'textarea': return lab(`<textarea data-f="${f.k}" rows="3">${esc(v)}</textarea>`);
     case 'num': return lab(`<input data-f="${f.k}" type="number" inputmode="decimal" step="${f.dec === 0 ? 1 : Math.pow(10, -(f.dec ?? 2))}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} value="${esc(v)}">`);
     case 'date': return lab(`<input data-f="${f.k}" type="date" value="${esc(v || (f.k === 'data' ? oggi() : ''))}">`);
@@ -307,7 +518,7 @@ function campo(f, d, sc) {
       const g = v || {};
       return `<div class="campo gps"><span class="lab">${esc(f.l)}${req}</span>
         <div class="gps-box">
-          <div class="gps-val">${g.lat ? `${g.lat.toFixed(6)}, ${g.lon.toFixed(6)}<br><small>quota ${g.alt != null ? Math.round(g.alt) + ' m' : 'n.d.'} · precisione ±${Math.round(g.acc || 0)} m · ${new Date(g.ts).toLocaleTimeString('it-IT')}</small>` : '<i>coordinate non rilevate</i>'}</div>
+          <div class="gps-val">${g.lat ? `${g.lat.toFixed(6)}, ${g.lon.toFixed(6)}<br><small>quota ${g.alt != null ? Math.round(g.alt) + ' m' : 'n.d.'} · precisione ±${Math.round(g.acc || 0)} m · ${new Date(g.ts).toLocaleTimeString('it-IT')}</small>` : '<i>coordinate non rilevate</i>'}${S.plot && S.plot.pianificato ? `<br><small>punto pianificato ${S.plot.pianificato.lat_pian.toFixed(6)}, ${S.plot.pianificato.lon_pian.toFixed(6)}${g.lat ? ` · <b>scostamento ${fmtDist(distanzaM(g.lat, g.lon, S.plot.pianificato.lat_pian, S.plot.pianificato.lon_pian))}</b>` : ''}</small>` : ''}</div>
           <button type="button" data-gps="${f.k}">📡 Rileva</button>
         </div>${help}</div>`;
     }
@@ -415,6 +626,7 @@ function bind() {
     setVal(k, arr); ridisegna();
   });
   app.querySelectorAll('[data-gps]').forEach(el => el.onclick = () => rilevaGps(el.dataset.gps, el));
+  app.querySelectorAll('select[data-codice]').forEach(el => el.onchange = () => selezionaCodice(el.value));
   app.querySelectorAll('[data-photo]').forEach(el => el.onchange = e => aggiungiFoto(el.dataset.photo, e.target.files[0]));
   app.querySelectorAll('[data-delfoto]').forEach(el => el.onclick = () => {
     const [k, id] = el.dataset.delfoto.split('|');
@@ -494,6 +706,10 @@ function applicaDefault(schedaId, data) {
 let tSalva;
 function setVal(k, v, differito) {
   const d = datiCorrenti(); d[k] = v;
+  if (k === 'codice' && S.param === 'anagrafica' && S.plot) {
+    const el = document.querySelector('.stato-cod'); const st = statoCodice(S.plot, v);
+    if (el) { el.className = 'help stato-cod ' + st.cls; el.textContent = (st.cls === 'ok' ? '✓ ' : '⚠ ') + st.txt; }
+  }
   S.schede[S.param].modificato = adesso();
   clearTimeout(tSalva);
   tSalva = setTimeout(() => salvaSchedaCorrente(), differito ? 700 : 100);
@@ -556,6 +772,11 @@ async function salvaSchedaCorrente() {
   if (S.param === 'anagrafica') {
     S.plot.codice = s.data.codice || S.plot.codice;
     S.plot.data = s.data;
+    // riferimento al piano sempre allineato al codice (cambio codice = cambio punto; codice fuori piano = nessun riferimento)
+    const q = pianificatoPerCodice(S.plot.codice);
+    if (q) { S.plot.codice = q.ads_id; s.data.codice = q.ads_id; }   // stessa grafia del piano (es. gm-con-01 -> GM-CON-01)
+    if (q && (!S.plot.pianificato || S.plot.pianificato.ads_id !== q.ads_id)) S.plot.pianificato = riferimentoPianificato(q);
+    if (!q && S.plot.pianificato && S.pianificati.length) S.plot.pianificato = null;
   }
   S.plot.modificato = adesso(); S.plot.sync = false;
   S.plot.schedeCompilate = Object.values(S.schede).filter(x => x.schedaId !== 'anagrafica' && x.stato && x.stato !== 'vuota').length;
@@ -573,9 +794,24 @@ async function azione(a, id, el) {
     case 'riepilogo': return vai('riepilogo');
     case 'sync': return sincronizza(false);
     case 'nuovo-plot': return nuovoPlot();
+    case 'crea-da-pian': return apriAdsCodice(id);
+    case 'codice-piano': S.codiceManuale = false; return ridisegna();
+    case 'collega-pian': return modaleCollega();
+    case 'conferma-collega': return confermaCollega();
+    case 'pos-pian': return posizionePianificati();
+    case 'toggle-pian': S.mostraPianificati = !S.mostraPianificati; return render();
+    case 'agg-pian': return aggiornaPianificati(false);
+    case 'importa-pian': return document.getElementById('file-pian').click();
     case 'apri-plot': return apriPlot(id);
     case 'apri-scheda': return apriScheda(id);
-    case 'salva-scheda': await salvaSchedaCorrente(); await caricaPlots(); return vai('plot');
+    case 'salva-scheda': {
+      if (S.param === 'anagrafica') {
+        const cod = String((datiCorrenti().codice || '')).trim();
+        if (!cod) return avviso('Inserisci il codice dell\'area di saggio.');
+        if (plotPerCodice(cod, S.plot.id)) return avviso(`Il codice ${cod} è già usato da un'altra area di saggio: scegline un altro.`);
+      }
+      await salvaSchedaCorrente(); await caricaPlots(); return vai('plot');
+    }
     case 'elimina-plot': return eliminaPlot();
     case 'riepilogo-plot': return mostraRiepilogoPlot();
     case 'esporta-plot': return esporta('json', S.plot.id);
@@ -620,10 +856,24 @@ function avviso(m) {
 }
 
 /* ---------- aree di saggio ---------- */
-async function nuovoPlot() {
+async function nuovoPlot(codice, pian) {
+  S.codiceManuale = false;
+  const cod = codice || (S.pianificati.length ? '' : 'AdS-' + String(S.plots.length + 1).padStart(3, '0'));
+  const data = { codice: cod, data: oggi(), ads_forma: 'Circolare', ads_raggio: S.coeff.raggioDefault, regione: 'Basilicata', progetto: S.config.progetto || '' };
+  if (pian) {
+    // precompilazione dell'anagrafica dal piano di campionamento (progetto QGIS)
+    const cat = CATEGORIA_DA_STRATO[String(pian.strato || '').split('-').pop()];
+    Object.assign(data, {
+      progetto: S.config.progetto || pian.progetto || 'BIORESTORE-MED - monitoraggio NRL Gravine di Matera / Valle del Basento',
+      comune: pian.comune || '', provincia: pian.provincia || 'MT', localita: pian.tipologia_forestale || '',
+      natura2000: !!pian.sito_n2000, cod_sito: pian.sito_n2000 || '', habitat: pian.habitat_atteso || '',
+      categoria: cat || '', tipo_rilievo: 'Primo rilievo'
+    });
+  }
   const p = {
-    id: uid('p'), codice: 'AdS-' + String(S.plots.length + 1).padStart(3, '0'),
-    data: { codice: 'AdS-' + String(S.plots.length + 1).padStart(3, '0'), data: oggi(), ads_forma: 'Circolare', ads_raggio: S.coeff.raggioDefault, regione: 'Basilicata', progetto: S.config.progetto || '' },
+    id: uid('p'), codice: cod, data,
+    pianificato: pian ? { ads_id: pian.ads_id, lat_pian: +pian.lat_pian, lon_pian: +pian.lon_pian, x_pian: pian.x_pian, y_pian: pian.y_pian, strato: pian.strato || '',
+      tipologia_forestale: pian.tipologia_forestale || '', ruolo: pian.ruolo || '', punto_ascolto: pian.punto_ascolto ? 1 : 0, sito_n2000: pian.sito_n2000 || '' } : null,
     utente: S.utente.u, creato: adesso(), modificato: adesso(), sync: false, stato: 'in corso', schedeCompilate: 0
   };
   await DB.put('plots', p);
@@ -634,6 +884,7 @@ async function nuovoPlot() {
   vai('scheda', 'anagrafica');
 }
 async function apriPlot(id) {
+  S.codiceManuale = false;
   S.plot = S.plots.find(p => p.id === id);
   const arr = await DB.byIndex('schede', 'plotId', id);
   S.schede = {}; arr.forEach(s => S.schede[s.schedaId] = s);
@@ -766,7 +1017,7 @@ async function calcolaRiepilogoProgetto() {
 function modale(titolo, html) {
   const d = document.createElement('div'); d.className = 'modale';
   d.innerHTML = `<div class="modale-box"><div class="modale-h"><h3>${titolo}</h3><button class="x">✕</button></div><div class="modale-c">${html}</div></div>`;
-  d.onclick = e => { if (e.target === d || e.target.className === 'x') d.remove(); };
+  d.onclick = e => { if (e.target === d || e.target.className === 'x') { d.remove(); return; } const b = e.target.closest('[data-a]'); if (b) azione(b.dataset.a, b.dataset.id, b); };
   document.body.appendChild(d);
 }
 
@@ -804,6 +1055,13 @@ function vistaImpostazioni() {
       .map(([k, l, u]) => `<label>${l}${u ? ` <em>(${u})</em>` : ''}<input id="k-${k}" type="number" step="0.01" value="${S.coeff[k]}"></label>`).join('')}
     <button data-a="salva-coeff">Salva coefficienti</button>
   </div>
+  <div class="card"><h2>Punti di campionamento pianificati (QGIS / QField)</h2>
+    <p class="muted small">L'elenco delle aree di saggio pianificate arriva dal progetto QGIS (file <code>punti_pianificati.geojson</code> pubblicato con l'app) e si aggiorna da solo quando c'è rete.
+      In alternativa si può importare a mano il GeoJSON esportato da QGIS. Da QField il link "Apri la scheda nell'app NRL" apre direttamente l'area di saggio con il suo codice.</p>
+    <p><b>${S.pianificati.length}</b> punti pianificati${S.pianificatiAgg ? ' · aggiornati il ' + new Date(S.pianificatiAgg).toLocaleString('it-IT') : ''} · <b>${pianificatiDaRilevare().length}</b> ancora da rilevare</p>
+    <div class="azioni"><button data-a="agg-pian">Aggiorna dal server</button><button data-a="importa-pian">Importa GeoJSON</button></div>
+    <input type="file" id="file-pian" accept=".geojson,.json,application/geo+json,application/json" hidden>
+  </div>
   <div class="card"><h2>Dati e backup</h2>
     <div class="azioni">
       <button data-a="exp-json">Esporta backup completo (JSON)</button>
@@ -811,7 +1069,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.0 · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.2 (codice AdS legato al piano di campionamento QGIS/QField) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 
@@ -939,6 +1197,9 @@ async function esporta(formato, soloPlot) {
       type: 'Feature', geometry: { type: 'Point', coordinates: [p.data.gps.lon, p.data.gps.lat] },
       properties: { codice: p.codice, comune: p.data.comune, localita: p.data.localita, data: p.data.data,
         categoria: p.data.categoria, governo: p.data.governo, quota: p.data.quota, rilevatore: p.utente,
+        strato: p.pianificato ? p.pianificato.strato : null, ruolo: p.pianificato ? p.pianificato.ruolo : null,
+        lat_pian: p.pianificato ? p.pianificato.lat_pian : null, lon_pian: p.pianificato ? p.pianificato.lon_pian : null,
+        scostamento_m: p.pianificato && p.data.gps ? Math.round(distanzaM(p.data.gps.lat, p.data.gps.lon, p.pianificato.lat_pian, p.pianificato.lon_pian)) : null,
         ...Object.fromEntries(SCHEDE_INDICATORI.map(sc => {
           const s = (perPlot[p.id] || {})[sc.id]; if (!s) return [sc.cod, null];
           const pS = S.plot; S.plot = p; S.schede = perPlot[p.id] || {};
@@ -1001,6 +1262,11 @@ document.addEventListener('DOMContentLoaded', () => {
   avvio();
   document.addEventListener('change', e => {
     if (e.target.id === 'file-backup' && e.target.files[0]) importaBackup(e.target.files[0]);
+    if (e.target.id === 'file-pian' && e.target.files[0]) {
+      const f = e.target.files[0];
+      f.text().then(t => importaPianificati(JSON.parse(t), 'file')).then(n => avviso(`Importati ${n} punti pianificati.`)).catch(x => avviso('Importazione non riuscita: ' + x.message));
+      e.target.value = '';
+    }
   });
   const osserva = new MutationObserver(() => { if (document.getElementById('riep-box') && document.getElementById('riep-box').textContent === 'Calcolo in corso…') calcolaRiepilogoProgetto(); });
   osserva.observe(document.getElementById('app'), { childList: true, subtree: true });

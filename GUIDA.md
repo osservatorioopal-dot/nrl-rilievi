@@ -265,3 +265,55 @@ Dopo ogni modifica ai file, incrementa `const CACHE = 'nrl-rilievi-v1'` in `sw.j
 *Verifica svolta: 24 test automatici sull'app (creazione utenze, GPS, tabelle di misura,
 calcoli F1/F2/F3/F5/F6/F7/F8, firma, persistenza dopo riavvio, funzionamento in modalità
 offline, sincronizzazione differita, upsert, esportazioni) e sul backend Apps Script.*
+
+---
+
+## 8. Integrazione con QGIS e QField (versione 1.1, 08/09/2026)
+
+L'app dialoga con il progetto QGIS del monitoraggio (cartella Drive "progetto dipartimento
+ambiente regione bas", file `01_QGIS/Monitoraggio_N2000_Matera_Basento.qgz`) e con QField:
+
+- **Punti pianificati.** Il file `punti_pianificati.geojson` (stessa cartella dell'app) contiene
+  le aree di saggio del piano di campionamento (codice, strato, tipologia forestale, habitat
+  atteso, ruolo, punto d'ascolto, sito Natura 2000, comune, coordinate). L'app lo scarica da
+  sola a ogni apertura con rete e lo conserva offline; in Impostazioni si può aggiornare o
+  importare a mano un GeoJSON esportato da QGIS.
+- **Home.** La sezione "Punti pianificati da rilevare" elenca le AdS non ancora create;
+  📡 *Vicini* ordina per distanza dalla posizione attuale, 🧭 apre la navigazione
+  (app di mappe del telefono), *Apri* crea l'area di saggio già compilata (codice, comune,
+  provincia, sito, habitat, categoria forestale, progetto).
+- **Link da QField.** L'indirizzo `https://osservatorioopal-dot.github.io/nrl-rilievi/?ads=GM-LEC-01`
+  apre direttamente l'area di saggio con quel codice (o la crea dal piano). Nel progetto QGIS
+  il campo "Apri la scheda nell'app NRL Rilievi" di ogni punto contiene questo link: da QField
+  basta toccarlo. Se l'app è installata, Android la apre al posto del browser.
+- **Scostamento dal punto.** Dopo il rilievo GPS l'anagrafica e la scheda dell'AdS mostrano
+  la distanza tra il centro rilevato e il punto pianificato (in campo conviene stare entro
+  la precisione del GNSS; oltre ~30 m annotare il motivo dello spostamento).
+- **Foglio Google.** Le righe di `Aree_di_saggio` hanno le colonne aggiuntive `ads_pianificata`,
+  `strato`, `tipologia_forestale`, `ruolo`, `punto_ascolto`, `lat_pian`, `lon_pian`, `x_pian`,
+  `y_pian`, `scostamento_m`. Il backend espone anche una lettura protetta da chiave
+  (`…/exec?formato=csv&foglio=Aree_di_saggio&token=…`) usata dallo script
+  `03_SCRIPT/aggiorna_da_foglio.py` del progetto QGIS per riportare i rilievi in mappa.
+
+### Aggiornamento dell'app pubblicata
+
+1. Su GitHub (repository `nrl-rilievi`) sovrascrivere `app.js`, `index.html`, `sw.js` e aggiungere
+   `punti_pianificati.geojson` (Add file → Upload files, oppure matita su ogni file).
+2. In Apps Script (progetto "NRL Rilievi - sincronizzazione") incollare il nuovo
+   `Codice-AppsScript.gs`, salvare, poi *Esegui il deployment → Gestisci deployment → matita →
+   Versione: Nuova versione → Esegui il deployment*. L'URL `/exec` resta lo stesso.
+3. Sui telefoni l'aggiornamento arriva alla prima apertura con rete (cache `nrl-rilievi-v3`).
+
+### Versione 1.2 – codice AdS legato al piano
+
+- Nell'anagrafica il **codice dell'area di saggio si sceglie da un elenco** dei punti pianificati
+  non ancora usati (ordinato per distanza se si è premuto 📡 *Vicini*); "Altro codice" permette
+  l'inserimento manuale per AdS fuori piano. Sotto il campo compare lo stato: ✓ collegata al punto,
+  ⚠ fuori piano, ⚠ codice già usato.
+- Il salvataggio è **bloccato se il codice è già usato** da un'altra AdS; un codice scritto a mano che
+  coincide con un punto del piano viene normalizzato (gm-con-01 → GM-CON-01) e agganciato.
+- Nella scheda dell'AdS il pulsante **🔗 Collega a punto pianificato** (o *Cambia punto pianificato*)
+  aggancia le aree di saggio create con codici manuali senza perdere le schede compilate.
+- Le card in home mostrano l'etichetta *piano ✓* / *fuori piano* / *codice doppio*; all'aggiornamento
+  dell'elenco dei punti le AdS con codice coincidente vengono agganciate automaticamente.
+- Il link da QField (`?ads=CODICE`) apre l'AdS esistente con quel codice o la crea dal piano.

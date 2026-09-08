@@ -27,3 +27,7 @@ per ogni rilevatore. GPS, foto e firma digitale su ogni scheda.
 Istruzioni complete di installazione, formule di calcolo e avvertenze: **[GUIDA.md](GUIDA.md)**.
 
 Osservatorio per l'Ambiente Lucano (O.P.A.L.)
+
+**Versione 1.1 (08/09/2026):** integrazione con il progetto QGIS/QField del monitoraggio Natura 2000 (punti pianificati, apertura diretta con `?ads=CODICE`, scostamento dal punto, esportazione CSV per QGIS). Vedi GUIDA.md § 8.
+
+**Versione 1.2 (08/09/2026):** codice AdS scelto dall'elenco dei punti pianificati, blocco dei codici doppi, collegamento delle AdS esistenti al piano. Vedi GUIDA.md § 8.
