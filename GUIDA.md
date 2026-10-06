@@ -317,3 +317,21 @@ ambiente regione bas", file `01_QGIS/Monitoraggio_N2000_Matera_Basento.qgz`) e c
 - Le card in home mostrano l'etichetta *piano ✓* / *fuori piano* / *codice doppio*; all'aggiornamento
   dell'elenco dei punti le AdS con codice coincidente vengono agganciate automaticamente.
 - Il link da QField (`?ads=CODICE`) apre l'AdS esistente con quel codice o la crea dal piano.
+
+### Versione 1.3 – fotografie per schede e report
+
+- La sincronizzazione delle foto è **attiva** (Impostazioni → "Includi le fotografie"): conviene sincronizzare in Wi-Fi.
+- Lo script Google archivia ogni foto nel Drive dell'account che possiede lo script (cartella `NRL Rilievi - foto/<codice AdS>/`)
+  con nome `<codice>_<SCHEDA>_<campo>_<n>.jpg` (es. `GM-LEC-01_AdS_foto_1.jpg` = prima foto dell'anagrafica, in ordine N-E-S-O;
+  `GM-LEC-01_F3_foto_1.jpg` = profilo verticale). Una foto reinviata sostituisce l'omonima; una foto eliminata nell'app resta in archivio.
+- Nel foglio Google nasce la scheda `Foto` (codice, scheda, campo, n, file, url, id_file…): è l'indice usato da QGIS e dai report.
+- Il progetto QGIS scarica le foto nella cartella locale `02_DATI/foto_app/<codice>/` con lo script `03_SCRIPT/aggiorna_da_foglio.py`
+  (stesso token di lettura dei CSV; vengono scaricate solo le foto nuove o aggiornate). Il layout Atlas "Scheda AdS" e il report di
+  campagna le leggono da lì con percorsi relativi.
+- La cartella di archivio può essere cambiata nello script (`PERCORSO_FOTO` o `CARTELLA_FOTO` con l'ID); `…/exec?cartella_foto=1` mostra quale cartella è in uso.
+- Valori predefiniti allineati al capitolato BRM-CAP-02: soglia di diametro 9,5 cm (F1/F5), transetti LIS 3 × 20 m (F2), dominanza delle
+  specie autoctone al 75 % dell'area basimetrica (F6, aggiornata automaticamente anche sui telefoni già installati); le righe vuote delle
+  tabelle (aggiunte e non compilate) non vengono più salvate né sincronizzate; ogni invio porta con sé i codici di tutte le AdS, così le
+  schede sincronizzate in un secondo momento riportano sempre il codice dell'area.
+- Nello script Google: `svuotaDatiDiProva` (azzera i fogli e cestina le foto) ed `eliminaAreeElencate` (solo i codici in `CODICI_DA_ELIMINARE`)
+  per togliere i dati di prova prima della campagna; `riparaCodiciArea` compila i codici mancanti nelle schede inviate dalle versioni precedenti.

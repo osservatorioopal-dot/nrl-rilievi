@@ -17,7 +17,11 @@
  * ---------------------------------------------------------------------------
  */
 
-var CARTELLA_FOTO = '';   // opzionale: ID di una cartella Drive per le foto
+var CARTELLA_FOTO = '';   // ID di una cartella Drive per le foto (se vuoto si usa PERCORSO_FOTO)
+/* Percorso della cartella delle foto dentro "Il mio Drive" dell'account che possiede lo script (creata se manca).
+   E' l'archivio delle foto: il progetto QGIS le scarica nella cartella locale 02_DATI/foto_app con lo script
+   03_SCRIPT/aggiorna_da_foglio.py (doGet ...?formato=foto&id=ID_FILE&token=...), senza dipendere da Drive per desktop. */
+var PERCORSO_FOTO = ['NRL Rilievi - foto'];
 
 /* Elenco dei nomi utente autorizzati a inviare dati. Se lasciato vuoto accetta
    qualunque invio. Poiché l'indirizzo di sincronizzazione è incorporato nell'app
@@ -42,7 +46,9 @@ function foglioDati() {
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (p.formato === 'csv' || p.formato === 'json') return esporta(p);
-  return json({ ok: true, servizio: 'NRL Rilievi', versione: 2, ora: new Date().toISOString() });
+  if (p.formato === 'foto') return esportaFoto(p);
+  if (p.cartella_foto === '1') { try { return json({ ok: true, cartella: cartellaFoto().getName(), id: cartellaFoto().getId() }); } catch (e) { return json({ ok: false, errore: String(e) }); } }
+  return json({ ok: true, servizio: 'NRL Rilievi', versione: 3, ora: new Date().toISOString() });
 }
 
 /* Esportazione di lettura per QGIS: ?formato=csv|json&foglio=Aree_di_saggio|Schede|Dettaglio_elementi&token=CHIAVE
@@ -60,6 +66,18 @@ function esporta(p) {
   return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
 }
 function testo(t) { return ContentService.createTextOutput(t).setMimeType(ContentService.MimeType.TEXT); }
+
+/* Scarica una foto per QGIS: ?formato=foto&id=ID_FILE_DRIVE&token=CHIAVE -> JSON { ok, nome, base64 }
+   (ContentService non restituisce file binari: l'immagine viaggia in base64 e lo script Python la decodifica). */
+function esportaFoto(p) {
+  if (!TOKEN_LETTURA || String(p.token) !== TOKEN_LETTURA) return json({ ok: false, errore: 'token non valido' });
+  try {
+    var file = DriveApp.getFileById(String(p.id || ''));
+    var blob = file.getBlob();
+    return json({ ok: true, nome: file.getName(), tipo: blob.getContentType(), dimensione: blob.getBytes().length,
+      base64: Utilities.base64Encode(blob.getBytes()) });
+  } catch (e) { return json({ ok: false, errore: String(e) }); }
+}
 
 /* ----------------------------------------------------------------- doPost */
 function doPost(e) {
@@ -120,15 +138,81 @@ function scriviAree(ss, p) {
   return n;
 }
 
+/* ------------------------------------------------------- MANUTENZIONE (da eseguire dall'editor Apps Script: Esegui) */
+/* Compila il codice AdS mancante nelle righe di Schede e Dettaglio_elementi (righe inviate da app < 1.3 senza l'area nello stesso invio). */
+function riparaCodiciArea() {
+  var ss = foglioDati();
+  var codici = mappaCodici(ss, {});
+  var n = 0;
+  [['Schede', 2, 3], ['Dettaglio_elementi', 2, 3]].forEach(function (cfg) {
+    var sh = ss.getSheetByName(cfg[0]); if (!sh || sh.getLastRow() < 2) return;
+    var colId = cfg[1], colCod = cfg[2];
+    if (cfg[0] === 'Dettaglio_elementi') {
+      // il dettaglio ha id_scheda, non id_area: si passa dalla scheda
+      var shS = ss.getSheetByName('Schede'); if (!shS || shS.getLastRow() < 2) return;
+      var vs = shS.getRange(2, 1, shS.getLastRow() - 1, 3).getValues();
+      var perScheda = {}; vs.forEach(function (r) { if (r[0]) perScheda[r[0]] = r[2] || codici[r[1]] || ''; });
+      var vd = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+      for (var i = 0; i < vd.length; i++) if (vd[i][0] && !vd[i][2] && perScheda[vd[i][1]]) { sh.getRange(i + 2, 3).setValue(perScheda[vd[i][1]]); n++; }
+      return;
+    }
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+    for (var j = 0; j < v.length; j++) if (v[j][0] && !v[j][colCod - 1] && codici[v[j][colId - 1]]) { sh.getRange(j + 2, colCod).setValue(codici[v[j][colId - 1]]); n++; }
+  });
+  Logger.log('codici compilati: ' + n);
+  return n;
+}
+
+/* Elimina un'area di saggio (per codice) con le sue schede, righe di dettaglio e foto dal foglio (i file su Drive restano).
+   Uso: nell'editor scrivere il codice nella costante qui sotto ed eseguire eliminaAreaDiSaggio. Attenzione: irreversibile. */
+var CODICE_DA_ELIMINARE = '';
+function eliminaAreaDiSaggio(codice) {
+  codice = codice || CODICE_DA_ELIMINARE;
+  if (!codice) throw new Error('indicare il codice AdS in CODICE_DA_ELIMINARE');
+  var ss = foglioDati();
+  var sh = ss.getSheetByName('Aree_di_saggio'); if (!sh) return;
+  var v = sh.getRange(2, 1, Math.max(1, sh.getLastRow() - 1), 2).getValues();
+  var ids = [];
+  for (var i = v.length - 1; i >= 0; i--) if (String(v[i][1]).toUpperCase() === String(codice).toUpperCase()) { ids.push(v[i][0]); sh.deleteRow(i + 2); }
+  var shS = ss.getSheetByName('Schede'), idSchede = [];
+  if (shS && shS.getLastRow() > 1) {
+    var vs = shS.getRange(2, 1, shS.getLastRow() - 1, 3).getValues();
+    for (var j = vs.length - 1; j >= 0; j--) if (ids.indexOf(vs[j][1]) >= 0 || String(vs[j][2]).toUpperCase() === String(codice).toUpperCase()) { idSchede.push(vs[j][0]); shS.deleteRow(j + 2); }
+  }
+  var shD = ss.getSheetByName('Dettaglio_elementi');
+  if (shD && shD.getLastRow() > 1) {
+    var vd = shD.getRange(2, 1, shD.getLastRow() - 1, 3).getValues();
+    for (var k = vd.length - 1; k >= 0; k--) if (idSchede.indexOf(vd[k][1]) >= 0 || String(vd[k][2]).toUpperCase() === String(codice).toUpperCase()) shD.deleteRow(k + 2);
+  }
+  var shF = ss.getSheetByName('Foto');
+  if (shF && shF.getLastRow() > 1) {
+    var vf = shF.getRange(2, 1, shF.getLastRow() - 1, 1).getValues();
+    for (var m = vf.length - 1; m >= 0; m--) if (String(vf[m][0]).toUpperCase() === String(codice).toUpperCase()) shF.deleteRow(m + 2);
+  }
+  Logger.log('eliminata ' + codice + ': aree ' + ids.length + ', schede ' + idSchede.length);
+}
+
 /* -------------------------------------------------------------------- SCHEDE */
 var COL_SCHEDE = ['id', 'id_area', 'codice_area', 'scheda', 'nome_scheda', 'valore_indicatore', 'unita',
   'stato', 'rilevatore', 'modificato', 'note', 'dettagli_calcolo', 'dati_json'];
 
+function mappaCodici(ss, p) {
+  // id area -> codice: dal payload (app >= 1.3 invia tutti i codici), dalle aree del payload e, in mancanza, dal foglio Aree_di_saggio
+  var codici = {};
+  Object.keys(p.codici || {}).forEach(function (k) { codici[k] = p.codici[k]; });
+  (p.plots || []).forEach(function (pl) { codici[pl.id] = pl.codice; });
+  var sh = ss.getSheetByName('Aree_di_saggio');
+  if (sh && sh.getLastRow() > 1) {
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+    v.forEach(function (r) { if (r[0] && !codici[r[0]]) codici[r[0]] = r[1]; });
+  }
+  return codici;
+}
+
 function scriviSchede(ss, p) {
   var sh = foglio(ss, 'Schede', COL_SCHEDE);
   var idx = indice(sh);
-  var codici = {};
-  (p.plots || []).forEach(function (pl) { codici[pl.id] = pl.codice; });
+  var codici = mappaCodici(ss, p);
   var n = 0;
   (p.schede || []).forEach(function (s) {
     var ind = s.indicatore || {};
@@ -152,8 +236,7 @@ var COL_DETT = ['id_riga', 'id_scheda', 'codice_area', 'scheda', 'tabella', 'n_r
 function scriviDettaglio(ss, p) {
   var sh = foglio(ss, 'Dettaglio_elementi', COL_DETT);
   var idx = indice(sh);
-  var codici = {};
-  (p.plots || []).forEach(function (pl) { codici[pl.id] = pl.codice; });
+  var codici = mappaCodici(ss, p);
   var n = 0;
   (p.schede || []).forEach(function (s) {
     var d = s.data || {};
@@ -161,6 +244,8 @@ function scriviDettaglio(ss, p) {
       var v = d[k];
       if (!Array.isArray(v) || !v.length || typeof v[0] !== 'object') return;
       v.forEach(function (r, i) {
+        var vuota = !Object.keys(r).some(function (ck) { return r[ck] !== '' && r[ck] !== null && r[ck] !== undefined && r[ck] !== false; });
+        if (vuota) return;
         var idRiga = s.id + '#' + k + '#' + i;
         var altri = {};
         Object.keys(r).forEach(function (ck) {
@@ -177,17 +262,51 @@ function scriviDettaglio(ss, p) {
 }
 
 /* --------------------------------------------------------------------- FOTO */
+function cartellaFoto() {
+  if (CARTELLA_FOTO) return DriveApp.getFolderById(CARTELLA_FOTO);
+  var dir = DriveApp.getRootFolder();
+  PERCORSO_FOTO.forEach(function (nome) {
+    var it = dir.getFoldersByName(nome);
+    dir = it.hasNext() ? it.next() : dir.createFolder(nome);
+  });
+  return dir;
+}
+
+function sottocartella(dir, nome) {
+  var it = dir.getFoldersByName(nome);
+  return it.hasNext() ? it.next() : dir.createFolder(nome);
+}
+
+var COL_FOTO = ['codice', 'scheda', 'campo', 'n', 'file', 'url', 'id_foto', 'id_area', 'rilevatore', 'ricevuto', 'id_file', 'byte'];
+
+/* Salva le foto in Drive: foto_app/<codice AdS>/<codice>_<SCHEDA>_<campo>_<n>.jpg (sostituisce l'omonimo) e
+   registra ogni file nel foglio "Foto" (upsert per id_foto). Le foto senza codice vanno in "senza_codice". */
 function salvaFoto(p) {
   var foto = p.foto || [];
-  if (!foto.length || !CARTELLA_FOTO) return 0;
-  var cartella = DriveApp.getFolderById(CARTELLA_FOTO);
+  if (!foto.length) return 0;
+  var base = cartellaFoto();
+  var ss = foglioDati();
+  var sh = foglio(ss, 'Foto', COL_FOTO);
+  var idx = indice(sh, 7);
   var n = 0;
   foto.forEach(function (f) {
     try {
+      var codice = String(f.codice || '').trim() || 'senza_codice';
+      var sigla = String(f.sigla || f.schedaId || 'scheda').replace(/^NRL-/, '').replace(/[^A-Za-z0-9]+/g, '');
+      var nome = [codice, sigla, f.campo || 'foto', f.n || 1].join('_') + '.jpg';
+      var dir = sottocartella(base, codice);
+      var vecchi = dir.getFilesByName(nome);
+      while (vecchi.hasNext()) vecchi.next().setTrashed(true);
+      // righe del foglio Foto con lo stesso nome file ma altro id (foto eliminata e rifatta nell'app): svuotate
+      var righe = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, COL_FOTO.length).getValues() : [];
+      for (var r = 0; r < righe.length; r++) {
+        if (righe[r][4] === nome && righe[r][6] !== f.id) { sh.getRange(r + 2, 1, 1, COL_FOTO.length).clearContent(); delete idx[righe[r][6]]; }
+      }
       var parti = String(f.dati).split(',');
-      var blob = Utilities.newBlob(Utilities.base64Decode(parti[1]), 'image/jpeg',
-        [f.plotId, f.schedaId, f.campo, f.id].join('_') + '.jpg');
-      cartella.createFile(blob); n++;
+      var file = dir.createFile(Utilities.newBlob(Utilities.base64Decode(parti[1]), 'image/jpeg', nome));
+      upsert(sh, idx, f.id, [codice, sigla, f.campo || '', f.n || 1, nome, file.getUrl(), f.id, f.plotId || '', p.utente || '',
+        new Date().toISOString(), file.getId(), file.getSize()]);
+      n++;
     } catch (e) {}
   });
   return n;
@@ -216,11 +335,11 @@ function distanzaM(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-function indice(sh) {
+function indice(sh, colonna) {
   var ultima = sh.getLastRow();
   var mappa = {};
   if (ultima < 2) return mappa;
-  var ids = sh.getRange(2, 1, ultima - 1, 1).getValues();
+  var ids = sh.getRange(2, colonna || 1, ultima - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) if (ids[i][0]) mappa[ids[i][0]] = i + 2;
   return mappa;
 }
@@ -271,6 +390,70 @@ function pulisci(d) {
 function json(o) {
   return ContentService.createTextOutput(JSON.stringify(o))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ------------------------------------------------------------- MANUTENZIONE
+   Funzioni da lanciare SOLO dall'editor Apps Script (selezionarle in alto e premere Esegui): non sono raggiungibili
+   dall'app né dal web. Servono a togliere i dati di prova prima dell'inizio della campagna. */
+
+/* Svuota TUTTI i dati (Aree_di_saggio, Schede, Dettaglio_elementi, Foto, Riepilogo): restano le intestazioni;
+   le foto in Drive vengono spostate nel cestino. Irreversibile (salvo ripristino dal cestino e dalla cronologia del foglio). */
+function svuotaDatiDiProva() {
+  var ss = foglioDati();
+  ['Aree_di_saggio', 'Schede', 'Dettaglio_elementi', 'Foto', 'Riepilogo'].forEach(function (nome) {
+    var sh = ss.getSheetByName(nome);
+    if (sh && sh.getLastRow() > 1) sh.deleteRows(2, sh.getLastRow() - 1);
+  });
+  try {
+    var dir = cartellaFoto();
+    var sotto = dir.getFolders(); while (sotto.hasNext()) sotto.next().setTrashed(true);
+    var file = dir.getFiles(); while (file.hasNext()) file.next().setTrashed(true);
+  } catch (e) {}
+  Logger.log('Dati di prova eliminati');
+}
+
+/* Elimina solo le aree di saggio elencate in CODICI_DA_ELIMINARE (schede, dettaglio e foto comprese). */
+var CODICI_DA_ELIMINARE = [];   // es. ['GM-LEC-05', 'GM-LEC-07']
+
+function eliminaAreeElencate() {
+  var ss = foglioDati();
+  var codici = {}; CODICI_DA_ELIMINARE.forEach(function (c) { codici[String(c).trim().toUpperCase()] = true; });
+  if (!Object.keys(codici).length) { Logger.log('Compilare CODICI_DA_ELIMINARE'); return; }
+  var idAree = {}, idSchede = {};
+  var sh = ss.getSheetByName('Aree_di_saggio');
+  if (sh) {
+    var v = sh.getDataRange().getValues();
+    for (var r = v.length - 1; r >= 1; r--) {
+      var cod = String(v[r][1] || '').toUpperCase(), pian = String(v[r][40] || '').toUpperCase();
+      if (codici[cod] || codici[pian]) { idAree[v[r][0]] = true; sh.deleteRow(r + 1); }
+    }
+  }
+  sh = ss.getSheetByName('Schede');
+  if (sh) {
+    v = sh.getDataRange().getValues();
+    for (r = v.length - 1; r >= 1; r--) {
+      if (idAree[v[r][1]] || codici[String(v[r][2] || '').toUpperCase()]) { idSchede[v[r][0]] = true; sh.deleteRow(r + 1); }
+    }
+  }
+  sh = ss.getSheetByName('Dettaglio_elementi');
+  if (sh) {
+    v = sh.getDataRange().getValues();
+    for (r = v.length - 1; r >= 1; r--) {
+      if (idSchede[v[r][1]] || codici[String(v[r][2] || '').toUpperCase()]) sh.deleteRow(r + 1);
+    }
+  }
+  sh = ss.getSheetByName('Foto');
+  if (sh) {
+    v = sh.getDataRange().getValues();
+    for (r = v.length - 1; r >= 1; r--) {
+      if (codici[String(v[r][0] || '').toUpperCase()] || idAree[v[r][7]]) sh.deleteRow(r + 1);
+    }
+  }
+  try {
+    var dir = cartellaFoto();
+    Object.keys(codici).forEach(function (c) { var it = dir.getFoldersByName(c); while (it.hasNext()) it.next().setTrashed(true); });
+  } catch (e) {}
+  Logger.log('Eliminate le aree: ' + Object.keys(codici).join(', '));
 }
 
 /* -------------------------------------------------- riepilogo (facoltativo)

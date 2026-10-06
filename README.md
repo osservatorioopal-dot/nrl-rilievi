@@ -31,3 +31,5 @@ Osservatorio per l'Ambiente Lucano (O.P.A.L.)
 **Versione 1.1 (08/09/2026):** integrazione con il progetto QGIS/QField del monitoraggio Natura 2000 (punti pianificati, apertura diretta con `?ads=CODICE`, scostamento dal punto, esportazione CSV per QGIS). Vedi GUIDA.md § 8.
 
 **Versione 1.2 (08/09/2026):** codice AdS scelto dall'elenco dei punti pianificati, blocco dei codici doppi, collegamento delle AdS esistenti al piano. Vedi GUIDA.md § 8.
+
+**Versione 1.3 (06/10/2026):** foto sincronizzate su Drive con il codice dell'area di saggio nel nome (archivio `NRL Rilievi - foto/<codice>/`, foglio `Foto` come indice) e scaricate dal progetto QGIS in `02_DATI/foto_app/` per le schede Atlas e i report; valori predefiniti del capitolato BRM-CAP-02 (D ≥ 9,5 cm, LIS 3 × 20 m, autoctone ≥ 75 % di G); funzioni di manutenzione nello script Google (pulizia dei dati di prova).

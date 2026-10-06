@@ -59,7 +59,7 @@ const CONFIG_PREDEFINITA = {
   syncUrl: SYNC_URL_PREDEFINITO,
   progetto: '',
   autoSync: true,
-  syncFoto: false
+  syncFoto: true
 };
 
 /* ============================== 2b. STATO =============================== */
@@ -87,7 +87,9 @@ async function avvio() {
   S.utenti = (await DB.get('kv', 'utenti')) || [];
   S.config = Object.assign({}, CONFIG_PREDEFINITA, (await DB.get('kv', 'config')) || {});
   if (!S.config.syncUrl) S.config.syncUrl = SYNC_URL_PREDEFINITO;   // vale anche per i dispositivi già installati
+  if (!S.config.fotoV13) { S.config.syncFoto = true; S.config.fotoV13 = true; await DB.put('kv', S.config, 'config'); }   // v1.3: foto nei report
   const c = await DB.get('kv', 'coeff'); if (c) Object.assign(S.coeff, c);
+  if (c && !c.capitolatoV13) { S.coeff.sogliaAutoctone = 75; S.coeff.capitolatoV13 = true; await DB.put('kv', S.coeff, 'coeff'); }   // v1.3: valori del capitolato
   const specieOv = await DB.get('kv', 'specieOverride');
   if (specieOv) Object.entries(specieOv).forEach(([k, v]) => { if (SPECIE_MAP[k]) Object.assign(SPECIE_MAP[k], v); });
   const sess = sessionStorage.getItem('nrl_utente');
@@ -764,8 +766,16 @@ function ridisegna() {
   bind(); window.scrollTo(0, y); aggiornaStatoRete();
 }
 
+function rigaVuota(r) {
+  return !r || typeof r !== 'object' || !Object.keys(r).some(k => r[k] !== '' && r[k] !== null && r[k] !== undefined && r[k] !== false);
+}
 async function salvaSchedaCorrente() {
   const s = S.schede[S.param]; if (!s) return;
+  // righe vuote delle tabelle (aggiunte e non compilate) non vengono salvate
+  Object.keys(s.data || {}).forEach(k => {
+    const v = s.data[k];
+    if (Array.isArray(v) && v.length && typeof v[0] === 'object' && v[0] !== null) s.data[k] = v.filter(r => !rigaVuota(r));
+  });
   s.stato = s.data._stato || 'bozza';
   s.utente = S.utente.u; s.modificato = adesso(); s.sync = false;
   await DB.put('schede', s);
@@ -1031,7 +1041,7 @@ function vistaImpostazioni() {
       <input id="c-url" value="${esc(S.config.syncUrl || '')}" placeholder="https://script.google.com/macros/s/…/exec"></label>
     <label>Nome del progetto / campagna<input id="c-prog" value="${esc(S.config.progetto || '')}"></label>
     <label class="campo check"><input id="c-auto" type="checkbox" ${S.config.autoSync ? 'checked' : ''}><span>Sincronizza automaticamente quando torna la connessione</span></label>
-    <label class="campo check"><input id="c-foto" type="checkbox" ${S.config.syncFoto ? 'checked' : ''}><span>Includi le fotografie nella sincronizzazione (più lenta, consuma dati)</span></label>
+    <label class="campo check"><input id="c-foto" type="checkbox" ${S.config.syncFoto ? 'checked' : ''}><span>Includi le fotografie nella sincronizzazione (necessario per le schede e i report; preferire il Wi-Fi)</span></label>
     <div class="azioni"><button class="primario" data-a="salva-config">Salva</button><button data-a="test-sync">Prova la connessione</button><button data-a="sync">Sincronizza ora</button></div>
     <div id="sync-log" class="log"></div>
   </div>
@@ -1069,7 +1079,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.2 (codice AdS legato al piano di campionamento QGIS/QField) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.3 (foto con codice AdS per schede e report; valori predefiniti del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 
@@ -1134,13 +1144,22 @@ async function sincronizza(silenzioso) {
     const tf = await DB.all('foto');
     foto = tf.filter(f => !f.sync);
   }
+  const codici = {};
+  S.plots.forEach(p => { codici[p.id] = p.codice; });
   const payload = {
-    versione: 1, dispositivo: navigator.userAgent.slice(0, 80),
+    versione: 2, codici, dispositivo: navigator.userAgent.slice(0, 80),
     utente: S.utente.u, nomeUtente: S.utente.nome, progetto: S.config.progetto,
     inviato: adesso(),
     plots: plots.map(p => ({ ...p })),
     schede: schede.map(s => ({ ...s, indicatore: calcolaPerSync(s) })),
-    foto: foto.map(f => ({ id: f.id, plotId: f.plotId, schedaId: f.schedaId, campo: f.campo, dati: f.dati }))
+    foto: foto.map(f => {
+      const pl = S.plots.find(p => p.id === f.plotId) || {};
+      const sc = tutte.find(s => s.plotId === f.plotId && s.schedaId === f.schedaId);
+      const arr = sc && sc.data && Array.isArray(sc.data[f.campo]) ? sc.data[f.campo] : [];
+      const def = SCHEDE_MAP[f.schedaId];
+      return { id: f.id, plotId: f.plotId, codice: pl.codice || '', schedaId: f.schedaId, sigla: def ? def.cod : f.schedaId, campo: f.campo,
+        n: Math.max(1, arr.indexOf(f.id) + 1), dati: f.dati };
+    })
   };
   try {
     const r = await fetch(S.config.syncUrl, {
