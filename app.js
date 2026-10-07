@@ -55,6 +55,13 @@ const DB = (() => {
    riproposto automaticamente se il campo viene lasciato vuoto. */
 const SYNC_URL_PREDEFINITO =
   'https://script.google.com/macros/s/AKfycbwoFy-rUIsJEojblBEWmQWQC35VViqc7zhGQMpjv7AWhCAntmTR86pYeCxyzEzCbm8w/exec';
+/* v1.5 — ruoli. Il codice amministratore (conosciuto solo dal responsabile) promuove un'utenza locale ad amministratore:
+   senza codice le utenze create sui telefoni sono "rilevatore" (schede e sincronizzazione, niente impostazioni, coefficienti,
+   utenti, backup o cancellazioni). Qui c'è solo l'impronta SHA-256 del codice, non il codice. */
+const ADMIN_SALT = 'nrl-admin-2026';
+const ADMIN_HASH = 'd0b0bbfa37c53fda11257b727c8b4970a620bfc43206169a6124c8739baa4296';
+const isAdmin = () => !!(S.utente && S.utente.ruolo === 'admin');
+
 const CONFIG_PREDEFINITA = {
   syncUrl: SYNC_URL_PREDEFINITO,
   progetto: '',
@@ -92,6 +99,10 @@ async function avvio() {
   if (c && !c.capitolatoV13) { S.coeff.sogliaAutoctone = 75; S.coeff.capitolatoV13 = true; await DB.put('kv', S.coeff, 'coeff'); }   // v1.3: valori del capitolato
   const specieOv = await DB.get('kv', 'specieOverride');
   if (specieOv) Object.entries(specieOv).forEach(([k, v]) => { if (SPECIE_MAP[k]) Object.assign(SPECIE_MAP[k], v); });
+  if (!S.config.ruoliV15) {   // v1.5: le utenze create finora erano tutte "admin": diventano rilevatori; l'amministratore si promuove col codice
+    S.utenti.forEach(u => { if (!u.adminOk) u.ruolo = 'rilevatore'; });
+    await DB.put('kv', S.utenti, 'utenti'); S.config.ruoliV15 = true; await DB.put('kv', S.config, 'config');
+  }
   const sess = sessionStorage.getItem('nrl_utente');
   if (sess && S.utenti.find(u => u.u === sess)) S.utente = S.utenti.find(u => u.u === sess);
   await caricaPlots();
@@ -136,7 +147,7 @@ function render() {
   switch (S.vista) {
     case 'plot': html = vistaPlot(); break;
     case 'scheda': html = vistaScheda(); break;
-    case 'impostazioni': html = vistaImpostazioni(); break;
+    case 'impostazioni': html = isAdmin() ? vistaImpostazioni() : vistaHome(); break;
     case 'riepilogo': html = vistaRiepilogoProgetto(); break;
     default: html = vistaHome();
   }
@@ -153,7 +164,7 @@ function intestazione() {
     <div class="top-r">
       <span id="rete" class="rete">●</span>
       <button class="ico" data-a="sync" title="Sincronizza">⟳${pend ? `<b>${pend}</b>` : ''}</button>
-      <button class="ico" data-a="impostazioni" title="Impostazioni">⚙</button>
+      ${isAdmin() ? '<button class="ico" data-a="impostazioni" title="Impostazioni">⚙</button>' : '<button class="ico" data-a="diventa-admin" title="Codice amministratore">🔑</button>'}
       <button class="ico" data-a="logout" title="Esci">⏻</button>
     </div></header>`;
 }
@@ -162,11 +173,13 @@ function vistaPrimoAvvio() {
   return `<div class="wrap login">
     <div class="card">
       <h1>NRL Rilievi</h1>
-      <p class="muted">Primo avvio: crea l'utenza di amministrazione. Le utenze restano su questo dispositivo e permettono l'accesso anche senza connessione.</p>
+      <p class="muted">Primo avvio: crea la tua utenza di rilevatore. Le utenze restano su questo dispositivo e permettono l'accesso anche senza connessione.
+        Il responsabile del progetto inserisce anche il codice amministratore (facoltativo) per avere le impostazioni.</p>
       <label>Nome e cognome<input id="i-nome" placeholder="Mario Rossi"></label>
       <label>Nome utente<input id="i-user" autocapitalize="none" placeholder="mrossi"></label>
       <label>Password<input id="i-pwd" type="password" placeholder="almeno 6 caratteri"></label>
       <label>Conferma password<input id="i-pwd2" type="password"></label>
+      <label>Codice amministratore (solo per il responsabile)<input id="i-admin" type="password" autocomplete="off" placeholder="lascia vuoto se sei un rilevatore"></label>
       <button class="primario" data-a="crea-admin">Crea utenza e inizia</button>
       <p class="err" id="err"></p>
     </div></div>`;
@@ -428,7 +441,7 @@ function vistaPlot() {
         ${S.pianificati.length ? `<button data-a="collega-pian">${p.pianificato ? 'Cambia punto pianificato' : '🔗 Collega a punto pianificato'}</button>` : ''}
         <button data-a="riepilogo-plot">Riepilogo indicatori</button>
         <button data-a="esporta-plot">Esporta</button>
-        <button class="pericolo" data-a="elimina-plot">Elimina</button>
+        ${(isAdmin() || !p.utente || p.utente === S.utente.u) ? '<button class="pericolo" data-a="elimina-plot">Elimina</button>' : ''}
       </div>
     </div>
     ${righe}
@@ -800,7 +813,10 @@ async function azione(a, id, el) {
     case 'login': return login();
     case 'logout': S.utente = null; sessionStorage.removeItem('nrl_utente'); return render();
     case 'home': S.plot = null; return vai('home');
-    case 'impostazioni': return vai('impostazioni');
+    case 'impostazioni': if (!isAdmin()) return avviso('Le impostazioni sono riservate all\'amministratore: usa il tasto 🔑 con il codice.'); return vai('impostazioni');
+    case 'diventa-admin': return modale('Codice amministratore', `<p class="muted small">Inserisci il codice del responsabile del progetto per rendere amministratore l'utenza <b>${esc(S.utente.u)}</b> su questo dispositivo.</p>
+      <label>Codice<input id="adm-code" type="password" autocomplete="off"></label><div class="azioni"><button class="primario" data-a="conferma-admin">Conferma</button></div><p class="err" id="adm-err"></p>`);
+    case 'conferma-admin': return confermaAdmin();
     case 'riepilogo': return vai('riepilogo');
     case 'sync': return sincronizza(false);
     case 'nuovo-plot': return nuovoPlot();
@@ -845,11 +861,27 @@ async function creaAdmin() {
   if (!nome || !u) return err('Inserisci nome e nome utente.');
   if (p.length < 6) return err('La password deve avere almeno 6 caratteri.');
   if (p !== p2) return err('Le due password non coincidono.');
+  const codice = val('i-admin').trim();
+  let ruolo = 'rilevatore';
+  if (codice) {
+    if (await sha256(ADMIN_SALT + codice) !== ADMIN_HASH) return err('Codice amministratore errato (lascia vuoto il campo se sei un rilevatore).');
+    ruolo = 'admin';
+  }
   const salt = uid('s'); const hash = await sha256(salt + p);
-  S.utenti = [{ u, nome, salt, hash, ruolo: 'admin', creato: adesso() }];
+  S.utenti = [{ u, nome, salt, hash, ruolo, adminOk: ruolo === 'admin', creato: adesso() }];
+  S.config.ruoliV15 = true; await DB.put('kv', S.config, 'config');
   await DB.put('kv', S.utenti, 'utenti');
   S.utente = S.utenti[0]; sessionStorage.setItem('nrl_utente', u);
   vai('home');
+}
+async function confermaAdmin() {
+  const codice = val('adm-code').trim();
+  const e = document.getElementById('adm-err');
+  if (!codice || await sha256(ADMIN_SALT + codice) !== ADMIN_HASH) { if (e) e.textContent = 'Codice errato.'; return; }
+  S.utente.ruolo = 'admin'; S.utente.adminOk = true;
+  await DB.put('kv', S.utenti, 'utenti');
+  document.querySelectorAll('.modale').forEach(m => m.remove());
+  avviso('Utenza ' + S.utente.u + ' promossa ad amministratore.'); render();
 }
 async function login() {
   const u = val('i-user').trim().toLowerCase(), p = val('i-pwd');
@@ -906,6 +938,7 @@ function apriScheda(id) {
   vai('scheda', id);
 }
 async function eliminaPlot() {
+  if (!isAdmin() && S.plot.utente && S.plot.utente !== S.utente.u) return avviso('Puoi eliminare solo le aree di saggio create da te; per le altre serve l\'amministratore.');
   if (!confirm('Eliminare definitivamente l\'area di saggio ' + S.plot.codice + ' e tutte le sue schede? I dati già sincronizzati restano sul foglio Google.')) return;
   const arr = await DB.byIndex('schede', 'plotId', S.plot.id);
   for (const s of arr) await DB.del('schede', s.id);
@@ -1046,7 +1079,8 @@ function vistaImpostazioni() {
     <div id="sync-log" class="log"></div>
   </div>
   <div class="card"><h2>Utenti</h2>
-    <p class="muted small">Le utenze sono locali al dispositivo e servono a identificare il rilevatore anche senza connessione. Non sostituiscono un controllo di accesso lato server.</p>
+    <p class="muted small">Le utenze sono locali al dispositivo e servono a identificare il rilevatore anche senza connessione. I rilevatori compilano e sincronizzano le schede ed
+      eliminano solo le proprie aree di saggio; le impostazioni, i coefficienti, gli utenti e i backup sono dell'amministratore (utenza promossa con il codice del responsabile, tasto 🔑).</p>
     <table class="riep"><tbody>${S.utenti.map(u => `<tr><td><b>${esc(u.nome)}</b><br><span class="muted">${esc(u.u)} · ${esc(u.ruolo)}</span></td>
       <td style="text-align:right">${u.u !== S.utente.u ? `<button class="pericolo" data-a="del-utente" data-id="${esc(u.u)}">Elimina</button>` : '<span class="muted">in uso</span>'}</td></tr>`).join('')}</tbody></table>
     <h3>Nuovo utente</h3>
@@ -1079,7 +1113,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.4 (specie delle gravine e ripariali: fragno, tamerice, salici, fico, olivastro…; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.5 (ruoli: amministratore con codice, rilevatori senza impostazioni; specie delle gravine e ripariali; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 
@@ -1095,7 +1129,7 @@ async function nuovoUtente() {
   if (!nome || !u || p.length < 6) return avviso('Compila i campi: la password deve avere almeno 6 caratteri.');
   if (S.utenti.find(x => x.u === u)) return avviso('Nome utente già presente.');
   const salt = uid('s');
-  S.utenti.push({ u, nome, salt, hash: await sha256(salt + p), ruolo: val('u-ruolo'), creato: adesso() });
+  S.utenti.push({ u, nome, salt, hash: await sha256(salt + p), ruolo: val('u-ruolo'), adminOk: val('u-ruolo') === 'admin', creato: adesso() });
   await DB.put('kv', S.utenti, 'utenti'); avviso('Utente aggiunto.'); render();
 }
 async function delUtente(u) {
