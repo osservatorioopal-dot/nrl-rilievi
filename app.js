@@ -1079,7 +1079,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.3 (foto con codice AdS per schede e report; valori predefiniti del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.4 (specie delle gravine e ripariali: fragno, tamerice, salici, fico, olivastro…; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 

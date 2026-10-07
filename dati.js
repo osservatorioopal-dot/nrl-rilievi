@@ -47,6 +47,16 @@ const SPECIE = [
   { c: 'ARUN', n: 'Corbezzolo (Arbutus unedo)',            g: 'latifoglia', aut: true,  wd: 0.72, bef: 1.42, r2s: 0.20 },
   { c: 'PHLA', n: 'Fillirea (Phillyrea latifolia)',        g: 'latifoglia', aut: true,  wd: 0.75, bef: 1.42, r2s: 0.20 },
   { c: 'CEAU', n: 'Bagolaro (Celtis australis)',           g: 'latifoglia', aut: true,  wd: 0.58, bef: 1.42, r2s: 0.20 },
+  // v1.4: specie delle gravine e delle formazioni ripariali/costiere (Gravine di Matera, Valle del Basento)
+  { c: 'QUTR', n: 'Fragno (Quercus trojana)',               g: 'latifoglia', aut: true,  wd: 0.75, bef: 1.42, r2s: 0.20 },
+  { c: 'TAMA', n: 'Tamerice (Tamarix africana / gallica)',  g: 'latifoglia', aut: true,  wd: 0.60, bef: 1.42, r2s: 0.20 },
+  { c: 'SASP', n: 'Salice (Salix spp., altre specie)',      g: 'latifoglia', aut: true,  wd: 0.35, bef: 1.42, r2s: 0.20 },
+  { c: 'FICA', n: 'Fico (Ficus carica)',                    g: 'latifoglia', aut: true,  wd: 0.43, bef: 1.42, r2s: 0.20 },
+  { c: 'OLEU', n: 'Olivastro / olivo (Olea europaea)',      g: 'latifoglia', aut: true,  wd: 0.80, bef: 1.42, r2s: 0.20 },
+  { c: 'PITE', n: 'Terebinto (Pistacia terebinthus)',       g: 'latifoglia', aut: true,  wd: 0.70, bef: 1.42, r2s: 0.20 },
+  { c: 'PYSP', n: 'Perastro (Pyrus spinosa)',               g: 'latifoglia', aut: true,  wd: 0.70, bef: 1.42, r2s: 0.20 },
+  { c: 'CRMO', n: 'Biancospino (Crataegus monogyna)',       g: 'latifoglia', aut: true,  wd: 0.70, bef: 1.42, r2s: 0.20 },
+  { c: 'RHAL', n: 'Alaterno (Rhamnus alaternus)',           g: 'latifoglia', aut: true,  wd: 0.70, bef: 1.42, r2s: 0.20 },
   // Conifere autoctone
   { c: 'ABAL', n: 'Abete bianco (Abies alba)',             g: 'conifera',   aut: true,  wd: 0.38, bef: 1.30, r2s: 0.29 },
   { c: 'PINL', n: 'Pino laricio (Pinus nigra subsp. calabrica)', g: 'conifera', aut: true, wd: 0.47, bef: 1.30, r2s: 0.29 },
@@ -68,6 +78,8 @@ const SPECIE = [
   { c: 'ACDE', n: 'Acacia dealbata (Acacia dealbata)',     g: 'latifoglia', aut: false, wd: 0.60, bef: 1.42, r2s: 0.20 },
   { c: 'JUNI', n: 'Noce nero (Juglans nigra)',             g: 'latifoglia', aut: false, wd: 0.55, bef: 1.42, r2s: 0.20 },
   { c: 'PLHI', n: 'Platano (Platanus x hispanica)',        g: 'latifoglia', aut: false, wd: 0.56, bef: 1.42, r2s: 0.20 },
+  { c: 'POCA', n: 'Pioppo ibrido / canadese (Populus x canadensis)', g: 'latifoglia', aut: false, wd: 0.35, bef: 1.42, r2s: 0.20 },
+  { c: 'ELAN', n: 'Olivagno (Elaeagnus angustifolia)',      g: 'latifoglia', aut: false, wd: 0.55, bef: 1.42, r2s: 0.20 },
   // Generiche
   { c: 'ALTL', n: 'Altra latifoglia',                      g: 'latifoglia', aut: true,  wd: 0.58, bef: 1.42, r2s: 0.20 },
   { c: 'ALTC', n: 'Altra conifera',                        g: 'conifera',   aut: true,  wd: 0.45, bef: 1.30, r2s: 0.29 },
@@ -109,7 +121,7 @@ const COEFF_DEFAULT = {
   fattoreForma: 0.50,        // f per volume albero morto in piedi con chioma
   fattoreFormaMoncone: 0.60, // f per moncone/troncone senza chioma
   frazioneCarbonio: 0.47,    // IPCC 2006: t C / t s.s.
-  sogliaAutoctone: 50,       // % di area basimetrica per definire "dominato da autoctone"
+  sogliaAutoctone: 75,       // % di area basimetrica per definire "dominato da autoctone" (capitolato BRM-CAP-02)
   sogliaDiamLegnoMorto: 10,  // cm — soglia di cavallettamento del legno morto
   sogliaDiamVivi: 4.5,       // cm — soglia INFC per il piano arboreo
   nClassiDisetaneo: 3,       // n. minimo di classi diametriche con >=10% dei fusti
