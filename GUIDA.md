@@ -20,9 +20,12 @@ nrl-rilievi/
 ├── schede.js                  definizione delle 9 schede e delle formule
 ├── app.js                     motore dell'applicazione
 ├── icon-192.png, icon-512.png, icon-512-maskable.png
-├── Codice-AppsScript.gs       backend di sincronizzazione su Google Sheets
+├── punti_pianificati.geojson  punti di campionamento del piano (progetto QGIS)
 └── GUIDA.md                   questo documento
 ```
+
+Lo script Google del backend (`Codice-AppsScript.gs`) **non è nel repository pubblico**: contiene il token di lettura del foglio e il
+codice squadra. La copia aggiornata è nella cartella del progetto (`04_APP_NRL`) e nell'editor Apps Script.
 
 Tutti i file stanno nella stessa cartella, senza sottocartelle: è la struttura
 già pubblicata su GitHub Pages.
@@ -300,7 +303,7 @@ ambiente regione bas", file `01_QGIS/Monitoraggio_N2000_Matera_Basento.qgz`) e c
 1. Su GitHub (repository `nrl-rilievi`) sovrascrivere `app.js`, `index.html`, `sw.js` e aggiungere
    `punti_pianificati.geojson` (Add file → Upload files, oppure matita su ogni file).
 2. In Apps Script (progetto "NRL Rilievi - sincronizzazione") incollare il nuovo
-   `Codice-AppsScript.gs`, salvare, poi *Esegui il deployment → Gestisci deployment → matita →
+   `Codice-AppsScript.gs` (copia nella cartella del progetto, non su GitHub), salvare, poi *Esegui il deployment → Gestisci deployment → matita →
    Versione: Nuova versione → Esegui il deployment*. L'URL `/exec` resta lo stesso.
 3. Sui telefoni l'aggiornamento arriva alla prima apertura con rete (cache `nrl-rilievi-v3`).
 
@@ -335,3 +338,54 @@ ambiente regione bas", file `01_QGIS/Monitoraggio_N2000_Matera_Basento.qgz`) e c
   schede sincronizzate in un secondo momento riportano sempre il codice dell'area.
 - Nello script Google: `svuotaDatiDiProva` (azzera i fogli e cestina le foto) ed `eliminaAreeElencate` (solo i codici in `CODICI_DA_ELIMINARE`)
   per togliere i dati di prova prima della campagna; `riparaCodiciArea` compila i codici mancanti nelle schede inviate dalle versioni precedenti.
+
+### Versione 1.5 – ruoli e specie (07/10/2026)
+
+- Due ruoli: **amministratore** (utenza promossa con il codice del responsabile, tasto 🔑) con impostazioni, coefficienti, utenti e backup;
+  **rilevatori** senza impostazioni, che compilano e sincronizzano le proprie schede ed eliminano solo le proprie aree di saggio.
+- Elenchi delle specie delle gravine e delle formazioni ripariali; foto con il codice dell'AdS; valori del capitolato BRM-CAP-02.
+
+### Versione 1.6 – Archivio di progetto per l'amministratore (09/11/2026)
+
+- Nuovo tasto **📋 Archivio di progetto** nell'intestazione, visibile **solo con il ruolo amministratore**: mostra in sola lettura le aree di saggio,
+  le schede e il conteggio delle foto di **tutti i rilevatori**, lette dal foglio Google del progetto (fogli `Aree_di_saggio`, `Schede`, `Foto`).
+- I dati arrivano dallo stesso servizio Apps Script della sincronizzazione (`…/exec?formato=json&foglio=…&token=…`), protetto dal **token di lettura
+  del foglio** – lo stesso usato da `03_SCRIPT/aggiorna_da_foglio.py` del progetto QGIS. Il token si inserisce in *Impostazioni → Archivio di progetto*
+  e resta salvato solo sul dispositivo dell'amministratore (non è nel codice pubblicato dell'app). Senza token l'archivio resta disattivato.
+- Contenuto della schermata: numero di aree nel foglio, completate, rilevatori attivi e **aree pianificate non ancora rilevate** (confronto con
+  `punti_pianificati.geojson`, per strato, escluse riserve e punti opzionali); tabella **per rilevatore** (AdS, completate, ultimo rilievo); elenco di tutte
+  le aree con ricerca e filtri (rilevatore, strato, stato), schede completate/totali, foto, scostamento dal punto pianificato; toccando una riga si aprono
+  le schede dell'area con stato e valore dell'indicatore. Le aree con la sola anagrafica in bozza sono segnalate come **vuota** e non contano come rilevate;
+  i codici presenti più volte sono segnalati come **doppio**; **qui** indica un'area presente anche sul dispositivo.
+- **CSV** dell'archivio (una riga per area: codice, strato, rilevatore, data, stato, schede completate/totali, foto, coordinate, scostamento…) per il
+  controllo d'ufficio senza passare da QGIS.
+- L'ultimo scaricamento resta sul dispositivo e si consulta anche offline; *Aggiorna dal foglio* lo rinnova (circa 0,7 MB: conviene il Wi-Fi).
+  L'archivio è di sola lettura: le correzioni si fanno dal telefono che ha creato l'area o direttamente sul foglio Google.
+- Nessuna modifica allo script Google: resta il deployment **v4.1** (con `AREE_CONGELATE`). Cache del service worker `nrl-rilievi-v8`.
+
+### Versione 1.7 – Le mie aree sul foglio e protezione contro le sovrascritture (09/11/2026)
+
+- **☁ Le mie aree sul foglio Google** (in home, per tutti): ogni rilevatore scarica sul telefono che sta usando le aree di saggio registrate
+  sul foglio con il proprio nome utente, anche se fatte con altri telefoni, per completarle o correggerle e poi sincronizzarle come sempre.
+  Ognuno vede solo le proprie aree (stesso nome utente o stesso nome e cognome registrato sul foglio: conviene usare sempre lo stesso nome utente).
+  Per il primo accesso serve il **codice squadra**, che il responsabile comunica ai rilevatori: si inserisce una sola volta per telefono.
+- Nell'elenco ogni area mostra lo stato sul foglio e il confronto con il telefono: *non presente* (da scaricare), *versione più recente sul foglio*
+  (da aggiornare), *già aggiornata*, *modifiche non ancora inviate* (sincronizzare prima, altrimenti scaricandola si perdono), *codice già usato
+  da un'altra area del telefono* (va risolto prima).
+- Le foto restano sul foglio come segnaposto ☁ e si scaricano con **☁ Scarica le foto** nella pagina dell'area (o tutte insieme spuntando la
+  casella nell'elenco, meglio in Wi-Fi). La firma fatta su un altro telefono resta registrata ("✓ Firma registrata sul foglio") e si può rifare.
+- **↻ Ricarica dal foglio** (pagina dell'area): sostituisce la copia del telefono con quella del foglio.
+- **Protezione contro le sovrascritture**: ogni area e scheda ricorda la versione del foglio da cui parte. Se sul foglio è arrivata nel frattempo
+  un'altra versione (lo stesso rilevatore da un altro telefono o una correzione dell'amministratore), l'invio di quella scheda viene ignorato e
+  l'app segnala l'area come **superata ↻** (avviso in home e nella pagina dell'area): si ricarica l'area dal foglio e si ripetono le ultime
+  modifiche. Schede diverse modificate su telefoni diversi si sommano senza conflitti. Se la risposta del foglio si perde (rete debole), il
+  reinvio viene riconosciuto e non dà falsi allarmi. Le aree già sincronizzate con la 1.6 sono protette dal primo avvio della 1.7.
+- **Amministratore**: dall'Archivio di progetto, aprendo un'area, *⬇ Scarica su questo telefono per correggerla*. L'area e le schede restano
+  intestate al rilevatore; chi corregge è registrato nella nuova colonna **revisore** (fogli Aree_di_saggio e Schede).
+- **Foto mai sovrascritte**: una foto nuova non sostituisce più un file con lo stesso nome se appartiene a un'altra area (codice doppio) o se
+  è ancora nella scheda: prende il primo numero libero. Resta la sostituzione di una foto tolta e rifatta nella stessa scheda.
+- **NRL-F5 calcolato con le schede della stessa area**: all'invio l'app usa F1 e F2 dell'area stessa per il carbonio della necromassa (prima
+  poteva mancare). I valori già sul foglio si correggono una volta con la funzione `correggiValoriF5` dello script (dall'editor: Esegui).
+- Script Google **v4.2** (stesso indirizzo /exec): azioni `?azione=mie` e `?azione=foto` (con codice squadra o token di lettura), controllo
+  delle versioni all'invio, colonne *revisore*. Il **token di lettura è stato cambiato il 09/11/2026** (il precedente era pubblico): va
+  aggiornato in `03_SCRIPT/aggiorna_da_foglio.py` e in *Impostazioni → Archivio di progetto* dell'amministratore. Cache del service worker `nrl-rilievi-v9`.

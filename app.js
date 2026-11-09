@@ -75,7 +75,8 @@ const S = {
   utente: null, utenti: [], coeff: { ...COEFF_DEFAULT }, config: {},
   plots: [], plot: null, schede: {}, vista: 'login', dirty: false,
   pianificati: [], pianificatiAgg: null, ultimaPos: null, adsRichiesta: null, mostraPianificati: true, codiceManuale: false,
-  archivio: null, archFiltro: { q: '', ril: '', strato: '', stato: '' }   // v1.6: archivio di progetto (dati di tutti i rilevatori, solo amministratore)
+  archivio: null, archFiltro: { q: '', ril: '', strato: '', stato: '' },   // v1.6: archivio di progetto (dati di tutti i rilevatori, solo amministratore)
+  mie: null, mieSel: {}, mieFoto: false, mieErr: '', mieCarica: false, codiceSquadra: '', fotoRemote: 0   // v1.7: le mie aree sul foglio
 };
 /* File dei punti di campionamento pianificati (stessa cartella dell'app, generato dal progetto QGIS) */
 const FILE_PIANIFICATI = 'punti_pianificati.geojson';
@@ -111,6 +112,8 @@ async function avvio() {
   S.pianificati = (await DB.get('kv', 'pianificati')) || [];
   S.pianificatiAgg = (await DB.get('kv', 'pianificatiAgg')) || null;
   S.archivio = (await DB.get('kv', 'archivio')) || null;
+  S.codiceSquadra = (await DB.get('kv', 'codiceSquadra')) || '';
+  if (!S.config.baseV17) await migraBaseV17();   // v1.7: versione del foglio da cui parte ogni area già sincronizzata
   // apertura diretta di un'area di saggio da QField (…/?ads=GM-LEC-01)
   try {
     const qs = new URLSearchParams(location.search);
@@ -153,6 +156,7 @@ function render() {
     case 'impostazioni': html = isAdmin() ? vistaImpostazioni() : vistaHome(); break;
     case 'riepilogo': html = vistaRiepilogoProgetto(); break;
     case 'archivio': html = isAdmin() ? vistaArchivio() : vistaHome(); break;
+    case 'mie': html = vistaMie(); break;
     default: html = vistaHome();
   }
   app.innerHTML = intestazione() + html;
@@ -215,6 +219,8 @@ function vistaHome() {
       <div class="stat"><b>${S.plots.filter(p => !p.sync).length}</b><span>da sincronizzare</span></div>
       <div class="stat clic" data-a="riepilogo"><b>↗</b><span>riepilogo indicatori</span></div>
     </div>
+    ${S.plots.some(p => p.superata) ? `<div class="nota err">⚠ Sul foglio c'è una versione più recente di ${esc(S.plots.filter(p => p.superata).map(p => p.codice).join(', '))}, arrivata da un altro telefono: apri l'area e premi <b>↻ Ricarica dal foglio</b>.</div>` : ''}
+    <div class="mie-link"><button class="link" data-a="mie">☁ Le mie aree sul foglio Google: recupera quelle fatte con altri telefoni</button></div>
     ${sezionePianificati(q)}
     ${lista.length ? lista.map(cardPlot).join('') : `<div class="vuoto">Nessuna area di saggio.<br>Premi <b>+ Nuova area di saggio</b> per iniziare il rilievo${S.pianificati.length ? ', oppure scegli un punto pianificato qui sopra' : ''}.</div>`}
   </div>`;
@@ -411,7 +417,9 @@ function cardPlot(p) {
       <div class="muted">${esc(p.data.comune || '—')}${p.data.localita ? ' · ' + esc(p.data.localita) : ''} · ${esc(p.data.data || '')}</div>${infoPianificato(p)}</div>
       <div class="badges">
         ${badgePiano(p)}
-        <span class="badge ${p.sync ? 'ok' : 'warn'}">${p.sync ? 'sincronizzata' : 'locale'}</span>
+        ${p.superata ? '<span class="badge err" title="sul foglio Google c\'è una versione più recente: apri l\'area e ricaricala">superata ↻</span>' : `<span class="badge ${p.sync ? 'ok' : 'warn'}">${p.sync ? 'sincronizzata' : 'locale'}</span>`}
+        ${p.supervisione ? `<span class="badge" title="area di un altro rilevatore scaricata per la correzione">di ${esc(p.nomeRilevatore || p.utente || '')}</span>` : ''}
+        ${p.congelata ? '<span class="badge err" title="bloccata dal responsabile: le modifiche non vengono registrate sul foglio">bloccata</span>' : ''}
         <span class="badge">${n}/8 schede</span>
       </div>
     </div>
@@ -440,12 +448,17 @@ function vistaPlot() {
       <h2>${esc(p.codice || 'Nuova area di saggio')}</h2>
       <div class="muted">${esc(p.data.comune || 'comune non indicato')} · ${esc(p.data.categoria || 'categoria non indicata')} · ${esc(p.data.data || '')}</div>
       ${infoPianificato(p)}
+      ${p.superata ? `<div class="nota err">⚠ Sul foglio Google c'è una versione più recente di quest'area, arrivata da un altro telefono${p.superataSchede && p.superataSchede.length ? ` (non registrate: ${esc(p.superataSchede.join(', '))})` : ''}. Premi <b>↻ Ricarica dal foglio</b> e ripeti le ultime modifiche.</div>` : ''}
+      ${p.congelata ? '<div class="nota err">Area bloccata dal responsabile del progetto: le modifiche fatte qui non vengono registrate sul foglio.</div>' : ''}
+      ${p.supervisione ? `<div class="nota">Area di <b>${esc(p.nomeRilevatore || p.utente)}</b> scaricata per la correzione: le schede restano intestate al rilevatore e tu risulti come revisore.</div>` : ''}
       <div class="azioni">
         <button data-a="apri-scheda" data-id="anagrafica">Modifica anagrafica</button>
         ${S.pianificati.length ? `<button data-a="collega-pian">${p.pianificato ? 'Cambia punto pianificato' : '🔗 Collega a punto pianificato'}</button>` : ''}
         <button data-a="riepilogo-plot">Riepilogo indicatori</button>
         <button data-a="esporta-plot">Esporta</button>
-        ${(isAdmin() || !p.utente || p.utente === S.utente.u) ? '<button class="pericolo" data-a="elimina-plot">Elimina</button>' : ''}
+        <button data-a="ricarica-area" title="sostituisce la copia di questo telefono con quella del foglio Google">↻ Ricarica dal foglio</button>
+        ${S.fotoRemote ? `<button data-a="foto-area" title="le foto di quest'area sono sul foglio: scaricale per vederle qui">☁ Scarica le foto (${S.fotoRemote})</button>` : ''}
+        ${(isAdmin() || eMia(p)) ? '<button class="pericolo" data-a="elimina-plot">Elimina</button>' : ''}
       </div>
     </div>
     ${righe}
@@ -549,7 +562,8 @@ function campo(f, d, sc) {
     }
     case 'sign': {
       return `<div class="campo"><span class="lab">${esc(f.l)}</span>
-        ${v ? `<div class="firma-box"><img src="${v}" alt="firma"><button type="button" data-delfirma="${f.k}">Cancella</button></div>`
+        ${v && String(v).startsWith('data:') ? `<div class="firma-box"><img src="${v}" alt="firma"><button type="button" data-delfirma="${f.k}">Cancella</button></div>`
+          : v ? `<div class="firma-box firma-remota"><span>✓ Firma registrata sul foglio (fatta su un altro telefono)</span><button type="button" data-delfirma="${f.k}">Firma di nuovo</button></div>`
             : `<div class="firma-box"><canvas data-sign="${f.k}" width="600" height="200"></canvas>
                <div class="firma-az"><button type="button" data-clearsign="${f.k}">Pulisci</button><button type="button" data-savesign="${f.k}">Conferma firma</button></div></div>`}</div>`;
     }
@@ -657,8 +671,14 @@ function bind() {
     const d = datiCorrenti(); setVal(k, (d[k] || []).filter(x => x !== id)); DB.del('foto', id); ridisegna();
   });
   app.querySelectorAll('[data-foto-id]').forEach(async img => {
-    const f = await DB.get('foto', img.dataset.fotoId); if (f) img.src = f.dati;
+    const f = await DB.get('foto', img.dataset.fotoId);
+    if (f && f.dati) { img.src = f.dati; return; }
+    const box = img.closest('.foto'); if (!box) return;   // v1.7: foto rimasta sul foglio (area recuperata da un altro telefono)
+    box.classList.add('remota'); img.remove();
+    box.insertAdjacentHTML('afterbegin', `<span class="remota-t">☁<br>${f && !f.mancante ? 'sul foglio' + (f.n ? '<br>n. ' + esc(f.n) : '') : 'non trovata'}</span>`);
   });
+  app.querySelectorAll('[data-miesel]').forEach(el => el.onchange = () => { S.mieSel[el.dataset.miesel] = el.checked; aggiornaContaMie(); });
+  const mf = document.getElementById('mie-foto'); if (mf) mf.onchange = () => { S.mieFoto = mf.checked; };
   app.querySelectorAll('[data-addrow]').forEach(el => el.onclick = () => {
     const k = el.dataset.addrow, d = datiCorrenti();
     const f = trovaCampo(k); const nuova = {};
@@ -799,7 +819,9 @@ async function salvaSchedaCorrente() {
     if (Array.isArray(v) && v.length && typeof v[0] === 'object' && v[0] !== null) s.data[k] = v.filter(r => !rigaVuota(r));
   });
   s.stato = s.data._stato || 'bozza';
-  s.utente = S.utente.u; s.modificato = adesso(); s.sync = false;
+  if (S.plot && S.plot.supervisione) { s.utente = s.utente || S.plot.utente; s.revisore = S.utente.u; S.plot.revisore = S.utente.u; }   // v1.7: correzione dell'amministratore
+  else s.utente = S.utente.u;
+  s.modificato = adesso(); s.sync = false;
   await DB.put('schede', s);
   if (S.param === 'anagrafica') {
     S.plot.codice = s.data.codice || S.plot.codice;
@@ -832,6 +854,15 @@ async function azione(a, id, el) {
     case 'arch-apri': return modaleArchivioArea(id);
     case 'arch-csv': return esportaArchivioCsv();
     case 'arch-azzera-filtri': S.archFiltro = { q: '', ril: '', strato: '', stato: '' }; return render();
+    case 'arch-scarica': return scaricaDaArchivio(id);
+    case 'mie': return apriMie();
+    case 'mie-agg': return aggiornaMie();
+    case 'mie-codice': return salvaCodiceSquadra();
+    case 'mie-scarica': return scaricaMieSelezionate();
+    case 'mie-tutte': return selezionaMie(true);
+    case 'mie-nessuna': return selezionaMie(false);
+    case 'ricarica-area': return ricaricaArea(S.plot && S.plot.id);
+    case 'foto-area': return scaricaFotoArea(S.plot && S.plot.id);
     case 'sync': return sincronizza(false);
     case 'nuovo-plot': return nuovoPlot();
     case 'crea-da-pian': return apriAdsCodice(id);
@@ -944,6 +975,7 @@ async function apriPlot(id) {
   S.plot = S.plots.find(p => p.id === id);
   const arr = await DB.byIndex('schede', 'plotId', id);
   S.schede = {}; arr.forEach(s => S.schede[s.schedaId] = s);
+  S.fotoRemote = (await DB.byIndex('foto', 'plotId', id)).filter(f => f.remota && !f.dati && !f.mancante).length;   // v1.7
   vai('plot');
 }
 function apriScheda(id) {
@@ -952,7 +984,7 @@ function apriScheda(id) {
   vai('scheda', id);
 }
 async function eliminaPlot() {
-  if (!isAdmin() && S.plot.utente && S.plot.utente !== S.utente.u) return avviso('Puoi eliminare solo le aree di saggio create da te; per le altre serve l\'amministratore.');
+  if (!isAdmin() && !eMia(S.plot)) return avviso('Puoi eliminare solo le aree di saggio create da te; per le altre serve l\'amministratore.');
   if (!confirm('Eliminare definitivamente l\'area di saggio ' + S.plot.codice + ' e tutte le sue schede? I dati già sincronizzati restano sul foglio Google.')) return;
   const arr = await DB.byIndex('schede', 'plotId', S.plot.id);
   for (const s of arr) await DB.del('schede', s.id);
@@ -1133,7 +1165,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.6 (archivio di progetto per l'amministratore con i dati di tutti i rilevatori; ruoli con codice amministratore; specie delle gravine e ripariali; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.7 (le mie aree sul foglio: ogni rilevatore recupera e corregge le aree fatte con altri telefoni; protezione contro le sovrascritture tra telefoni; archivio di progetto per l'amministratore con scaricamento delle aree da correggere; ruoli con codice amministratore; specie delle gravine e ripariali; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 
@@ -1302,8 +1334,9 @@ function modaleArchivioArea(id) {
       ${a.strato ? `<br>strato ${esc(a.strato)}${a.ruolo ? ' · ' + esc(a.ruolo) : ''}${a.ads_pianificata && a.ads_pianificata !== a.codice ? ' · pianificata come ' + esc(a.ads_pianificata) : ''}` : ''}
       ${lat != null && lon != null ? `<br>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}${a.precisione_m ? ' (±' + Math.round(archNum(a.precisione_m)) + ' m)' : ''}${archNum(a.scostamento_m) != null ? ' · ' + Math.round(archNum(a.scostamento_m)) + ' m dal punto pianificato' : ''} <a class="btn-link" href="geo:${lat},${lon}?q=${lat},${lon}(${encodeURIComponent(a.codice || '')})">🧭</a>` : '<br><span class="muted">senza posizione GPS nel foglio</span>'}
       <br><span class="muted">creata ${esc(archData(a.creato))} · modificata ${esc(archData(a.modificato))} · sincronizzata ${esc(archData(a.sincronizzato))} · foto nel foglio: ${fotoPerCodice[String(a.codice || '').toUpperCase()] || 0}</span></div>
+     <div class="azioni"><button class="primario" data-a="arch-scarica" data-id="${esc(a.id)}">⬇ Scarica su questo telefono per correggerla</button></div>
      <table class="riep" style="margin-top:8px"><thead><tr><th>Cod.</th><th>Scheda</th><th>Stato</th><th>Valore</th></tr></thead><tbody>${righe || '<tr><td colspan="4" class="muted">Nessuna scheda nel foglio per questa area.</td></tr>'}</tbody></table>
-     <p class="muted small">Dati del foglio Google al ${new Date(A.scaricato).toLocaleString('it-IT')}; le modifiche si fanno dal dispositivo che ha creato l'area.</p>`);
+     <p class="muted small">Dati del foglio Google al ${new Date(A.scaricato).toLocaleString('it-IT')}. Scaricandola su questo telefono puoi correggerla: resta intestata a ${esc(a.nome_rilevatore || a.rilevatore || 'chi l\'ha rilevata')} e tu risulti come revisore. Se nel frattempo il rilevatore la modifica dal suo telefono, il foglio tiene la versione arrivata per prima e chiede all'altro di ricaricarla.</p>`);
 }
 
 function esportaArchivioCsv() {
@@ -1313,6 +1346,284 @@ function esportaArchivioCsv() {
   const righe = A.aree.map(a => { const ss = schedePerArea[a.id] || []; const r = { ...a, strato: archStrato(a), schede_completate: archCompletate(ss), schede_totali: ss.length, foto: fotoPerCodice[String(a.codice || '').toUpperCase()] || 0 };
     return col.map(k => csvCell(r[k])).join(';'); });
   scarica(`archivio_progetto_${oggi()}.csv`, '﻿' + [col.map(csvCell).join(';'), ...righe].join('\n'), 'text/csv');
+}
+
+/* ============================== 9c. LE MIE AREE SUL FOGLIO (v1.7) =======
+   Ogni rilevatore scarica dal foglio Google le aree di saggio registrate col proprio nome utente, anche se fatte con altri
+   telefoni, per completarle o correggerle e risincronizzarle; l'amministratore può scaricare dall'archivio anche quelle degli
+   altri (supervisione: le schede restano intestate al rilevatore, l'amministratore risulta come revisore). Il servizio
+   Apps Script (v4.2) chiede il codice squadra (o il token di lettura dell'amministratore). Le foto restano sul foglio come
+   segnaposto e si scaricano quando servono; la firma fatta su un altro telefono resta registrata sul foglio. */
+
+/* aree già sincronizzate prima della 1.7: la versione sul foglio è quella inviata per ultima (stessa data di modifica) */
+async function migraBaseV17() {
+  for (const p of S.plots) if (p.sync && !p.base && p.modificato) { p.base = p.modificato; await DB.put('plots', p); }
+  for (const s of await DB.all('schede')) if (s.sync && !s.base && s.modificato) { s.base = s.modificato; await DB.put('schede', s); }
+  S.config.baseV17 = true; await DB.put('kv', S.config, 'config');
+}
+const normNome = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+/* area del rilevatore collegato: stesso nome utente, oppure (aree scaricate dal foglio) stesso nome e cognome */
+const eMia = p => !p.utente || p.utente === S.utente.u || (!!p.nomeRilevatore && normNome(p.nomeRilevatore) === normNome(S.utente.nome));
+const campiFoto = sc => sc ? sc.sezioni.flatMap(z => z.f).filter(f => f.t === 'photo').map(f => f.k) : [];
+const sigleSchede = () => Object.fromEntries(SCHEDE.map(sc => [String(sc.cod).replace(/^NRL-/, ''), sc.id]));
+
+function accessoServizio() {
+  if (isAdmin() && (S.config.tokenArchivio || '').trim()) return { token: S.config.tokenArchivio.trim() };
+  return S.codiceSquadra ? { chiave: S.codiceSquadra } : {};
+}
+async function chiamaServizio(param) {
+  if (!navigator.onLine) throw new Error('nessuna connessione');
+  const q = new URLSearchParams({ ...param, _: Date.now() });
+  const r = await fetch(S.config.syncUrl + '?' + q.toString(), { method: 'GET', cache: 'no-store' });
+  const txt = await r.text();
+  let o; try { o = JSON.parse(txt); } catch (e) { throw new Error('risposta non valida dal servizio Google'); }
+  if (o.servizio && o.versione && !o.aree && !o.base64)
+    throw new Error(`il servizio Google del foglio è alla versione ${o.versione}: per questa funzione serve la 4.2 (avvisa il responsabile)`);
+  if (!o.ok) { const e = new Error(o.messaggio || o.errore || 'errore del servizio'); e.codice = o.errore; throw e; }
+  return o;
+}
+
+function apriMie() {
+  vai('mie');
+  const acc = accessoServizio();
+  if (!S.mie && (acc.token || acc.chiave) && navigator.onLine) aggiornaMie();
+}
+async function aggiornaMie() {
+  if (!navigator.onLine) return avviso('Nessuna connessione: per vedere le tue aree sul foglio serve la rete.');
+  const acc = accessoServizio();
+  if (!acc.token && !acc.chiave) { S.mieErr = 'codice'; return render(); }
+  S.mieCarica = true; if (S.vista === 'mie') render();
+  try {
+    const o = await chiamaServizio({ azione: 'mie', utente: S.utente.u, nome: S.utente.nome, ...acc });
+    S.mie = { scaricato: adesso(), aree: o.aree || [], schede: o.schede || [], foto: o.foto || [], congelate: (o.congelate || []).map(String) };
+    S.mieErr = ''; S.mieSel = {};
+    S.mie.aree.forEach(a => { S.mieSel[a.id] = statoLocaleArea(a).sel; });
+  } catch (e) {
+    if (e.codice === 'codice_squadra') { S.mieErr = 'codice'; avviso('Codice squadra errato o mancante.'); }
+    else { S.mieErr = e.message; avviso('Elenco non scaricato: ' + e.message); }
+  } finally { S.mieCarica = false; if (S.vista === 'mie') render(); }
+}
+async function salvaCodiceSquadra() {
+  const c = val('mie-cod').trim().toLowerCase();
+  if (!c) return avviso('Inserisci il codice squadra.');
+  S.codiceSquadra = c; await DB.put('kv', c, 'codiceSquadra');
+  S.mieErr = '';
+  return aggiornaMie();
+}
+
+/* confronto tra l'area sul foglio e la copia di questo telefono */
+function statoLocaleArea(a) {
+  const loc = S.plots.find(p => String(p.id) === String(a.id));
+  if (!loc) {
+    const altra = S.plots.find(p => (p.codice || '').toUpperCase() === String(a.codice || '').toUpperCase());
+    if (altra) return { k: 'occupato', sel: false, cls: 'err', txt: `Su questo telefono c'è un'altra area ${a.codice} (non sincronizzata con questa): eliminala o cambiale codice, poi scarica.` };
+    return { k: 'nuova', sel: true, cls: 'ok', txt: 'Non è su questo telefono: verrà scaricata.' };
+  }
+  if (!loc.sync) return { k: 'locali', sel: false, cls: 'warn', txt: 'Su questo telefono ha modifiche non ancora inviate: sincronizza prima (se la selezioni le modifiche andranno perse).' };
+  if (loc.superata) return { k: 'superata', sel: true, cls: 'warn', txt: 'La copia di questo telefono è superata dal foglio: verrà aggiornata.' };
+  const tS = Date.parse(a.modificato) || 0, tL = Date.parse(loc.modificato) || 0;
+  if ((loc.codice || '') !== (a.codice || '') || Math.abs(tS - tL) > 1000)
+    return { k: 'aggiorna', sel: tS >= tL, cls: 'warn', txt: tS >= tL ? 'Sul foglio c\'è una versione più recente: verrà aggiornata.' : 'La copia di questo telefono è diversa da quella del foglio.' };
+  return { k: 'uguale', sel: false, cls: '', txt: 'Già aggiornata su questo telefono.' };
+}
+
+function vistaMie() {
+  const back = `<button class="link" data-a="home">← Aree di saggio</button>`;
+  const acc = accessoServizio();
+  const chiedeCodice = (!acc.token && !acc.chiave) || S.mieErr === 'codice';
+  const intro = `<div class="card"><h2>Le mie aree sul foglio Google</h2>
+    <p class="muted small">Qui trovi le aree di saggio registrate sul foglio con il tuo nome utente <b>${esc(S.utente.u)}</b> (${esc(S.utente.nome)}), anche se le hai fatte con un altro telefono.
+      Scaricale qui per completarle o correggerle, poi sincronizza come sempre.</p>
+    ${chiedeCodice ? `<div class="nota">Per il primo accesso serve il <b>codice squadra</b>: te lo dà il responsabile del progetto. Basta inserirlo una volta su questo telefono.</div>
+      <label>Codice squadra<input id="mie-cod" autocomplete="off" autocapitalize="none" spellcheck="false" value="${esc(S.codiceSquadra || '')}" placeholder="nrl-…"></label>
+      <div class="azioni"><button class="primario" data-a="mie-codice">Conferma</button></div>`
+    : `<div class="azioni"><button class="primario" data-a="mie-agg" ${S.mieCarica ? 'disabled' : ''}>${S.mieCarica ? 'Scarico l\'elenco dal foglio…' : (S.mie ? 'Aggiorna l\'elenco' : 'Scarica l\'elenco dal foglio')}</button></div>
+       ${S.mie ? `<div class="muted small">Elenco del ${new Date(S.mie.scaricato).toLocaleString('it-IT')}</div>` : ''}
+       ${S.mieErr && S.mieErr !== 'codice' ? `<p class="err">${esc(S.mieErr)}</p>` : ''}`}
+  </div>`;
+  if (chiedeCodice || !S.mie) return `<div class="wrap">${back}${intro}</div>`;
+  const aree = S.mie.aree.slice().sort((x, y) => String(x.codice).localeCompare(String(y.codice)));
+  if (!aree.length) return `<div class="wrap">${back}${intro}<div class="card"><p class="muted">Sul foglio non ci sono aree di saggio registrate con il nome utente <b>${esc(S.utente.u)}</b> o con il nome ${esc(S.utente.nome)}.
+    Se sugli altri telefoni hai usato un nome utente diverso, crea qui un'utenza con quello stesso nome utente.</p></div></div>`;
+  const perArea = {}, fotoPer = {};
+  S.mie.schede.forEach(s => { (perArea[s.id_area] = perArea[s.id_area] || []).push(s); });
+  S.mie.foto.forEach(f => { fotoPer[f.id_area] = (fotoPer[f.id_area] || 0) + 1; });
+  const righe = aree.map(a => {
+    const st = statoLocaleArea(a), ss = perArea[a.id] || [];
+    const nComp = ss.filter(s => s.stato === 'completata' || s.stato === 'validata').length;
+    return `<label class="mie-r ${st.cls}">
+      <input type="checkbox" data-miesel="${esc(a.id)}" ${S.mieSel[a.id] ? 'checked' : ''} ${st.k === 'occupato' ? 'disabled' : ''}>
+      <div class="mie-t"><b>${esc(a.codice || 'senza codice')}</b> <span class="badge ${a.stato === 'completata' ? 'ok' : 'warn'}">${esc(a.stato || '')}</span>
+        ${S.mie.congelate.includes(String(a.id)) ? '<span class="badge err">bloccata</span>' : ''}
+        <div class="muted small">${esc(archData(a.data))}${a.comune ? ' · ' + esc(a.comune) : ''} · ${nComp}/${ss.length} schede completate · ${fotoPer[a.id] || 0} foto</div>
+        <div class="small mie-st">${esc(st.txt)}</div></div>
+    </label>`;
+  }).join('');
+  return `<div class="wrap">${back}${intro}
+    <div class="card"><h3>Aree sul foglio (${aree.length})</h3>
+      <div class="mie-sel muted small">Seleziona: <button class="link" data-a="mie-tutte">tutte</button> · <button class="link" data-a="mie-nessuna">nessuna</button></div>
+      ${righe}
+      <label class="campo check" style="margin-top:10px"><input type="checkbox" id="mie-foto" ${S.mieFoto ? 'checked' : ''}><span>Scarica anche le foto (<b id="mie-mb">${mbSelezionate().toFixed(1)}</b> MB, meglio in Wi-Fi). Se non le scarichi restano sul foglio e le puoi scaricare dall'area quando servono.</span></label>
+      <div class="azioni"><button class="primario" data-a="mie-scarica" id="mie-btn">${testoBottoneMie()}</button></div>
+      <p class="muted small">Le aree scaricate sostituiscono la copia di questo telefono. Quelle con modifiche non ancora inviate non sono selezionate: sincronizza prima, oppure selezionale per sostituirle con la versione del foglio.</p>
+    </div></div>`;
+}
+const mbSelezionate = () => S.mie ? S.mie.foto.filter(f => S.mieSel[f.id_area]).reduce((t, f) => t + (+f.byte || 0), 0) / 1048576 : 0;
+const testoBottoneMie = () => { const n = S.mie ? S.mie.aree.filter(a => S.mieSel[a.id]).length : 0; return `Scarica ${n === 1 ? 'l\'area selezionata' : `le aree selezionate (${n})`}`; };
+function aggiornaContaMie() {
+  const b = document.getElementById('mie-btn'); if (b) b.textContent = testoBottoneMie();
+  const m = document.getElementById('mie-mb'); if (m) m.textContent = mbSelezionate().toFixed(1);
+}
+function selezionaMie(tutte) {
+  if (!S.mie) return;
+  S.mie.aree.forEach(a => { S.mieSel[a.id] = tutte && statoLocaleArea(a).k !== 'occupato'; });
+  render();
+}
+async function scaricaMieSelezionate() {
+  if (!S.mie) return;
+  const scelte = S.mie.aree.filter(a => S.mieSel[a.id] && statoLocaleArea(a).k !== 'occupato');
+  if (!scelte.length) return avviso('Seleziona almeno un\'area.');
+  const conModifiche = scelte.filter(a => statoLocaleArea(a).k === 'locali').map(a => a.codice);
+  if (conModifiche.length && !confirm(`Su questo telefono ${conModifiche.join(', ')} ${conModifiche.length === 1 ? 'ha' : 'hanno'} modifiche non ancora inviate al foglio: verranno sostituite dalla versione del foglio e andranno perse. Continuare?`)) return;
+  for (const a of scelte) await installaArea(a, S.mie.schede.filter(s => s.id_area === a.id), S.mie.foto.filter(f => f.id_area === a.id), S.mie.congelate, {});
+  await caricaPlots();
+  scelte.forEach(a => { S.mieSel[a.id] = false; });
+  avviso(`${scelte.length} ${scelte.length === 1 ? 'area scaricata' : 'aree scaricate'} dal foglio.`);
+  if (S.mieFoto) for (const a of scelte) await scaricaFotoArea(a.id, true);
+  vai('home');
+}
+
+/* anagrafica ricostruita dalle colonne del foglio (solo per aree senza la scheda anagrafica) */
+function datiDaRigaArea(a) {
+  const num = v => (v === '' || v === null || v === undefined || !isFinite(+v)) ? '' : +v;
+  const haGps = a.lat !== '' && a.lon !== '' && isFinite(+a.lat) && isFinite(+a.lon);
+  return { codice: a.codice || '', progetto: a.progetto || '', data: String(a.data || '').slice(0, 10), comune: a.comune || '', localita: a.localita || '',
+    regione: a.regione || '', provincia: a.provincia || '', foglio: a.foglio || '', particella: a.particella || '', part_forestale: a.particella_forestale || '',
+    proprieta: a.proprieta || '', quota: num(a.quota), esposizione: a.esposizione || '', pendenza: num(a.pendenza), giacitura: a.giacitura || '',
+    ads_forma: a.forma_ads || 'Circolare', ads_raggio: num(a.raggio_m), categoria: a.categoria_forestale || '', governo: a.forma_governo || '', stadio: a.stadio || '',
+    copertura: num(a.copertura_pct), eta_stimata: a.eta_stimata || '', ultimo_intervento: a.ultimo_intervento || '', natura2000: a.natura2000 === 'SI',
+    cod_sito: a.codice_sito || '', habitat: a.habitat || '', disturbi: a.disturbi ? String(a.disturbi).split(', ').filter(Boolean) : [],
+    gps: haGps ? { lat: +a.lat, lon: +a.lon, alt: num(a.quota_gps) === '' ? null : +a.quota_gps, acc: +a.precisione_m || 0, ts: Date.parse(a.creato) || Date.now() } : undefined,
+    _stato: 'bozza' };
+}
+
+/* scrive sul telefono un'area del foglio (con schede e segnaposto delle foto), sostituendo la copia locale */
+async function installaArea(a, righeSchede, righeFoto, congelate, opt) {
+  const id = String(a.id), sigle = sigleSchede();
+  const fotoLoc = Object.fromEntries((await DB.byIndex('foto', 'plotId', id)).map(f => [f.id, f]));
+  const perChiave = {}, fotoRighe = {};
+  righeFoto.forEach(f => {
+    fotoRighe[String(f.id_foto)] = f;
+    const sid = sigle[f.scheda]; if (!sid) return;
+    const k = sid + '|' + (f.campo || 'foto');
+    (perChiave[k] = perChiave[k] || []).push(f);
+  });
+  Object.values(perChiave).forEach(l => l.sort((x, y) => (+x.n || 0) - (+y.n || 0)));
+  const usate = new Set();
+  const schede = righeSchede.map(r => {
+    let d = {}; try { d = JSON.parse(r.dati_json || '{}') || {}; } catch (e) { d = {}; }
+    campiFoto(SCHEDE_MAP[r.scheda]).forEach(k => {
+      const lista = (perChiave[r.scheda + '|' + k] || []).map(f => String(f.id_foto));
+      const v = d[k];
+      d[k] = Array.isArray(v) ? v.map(String) : ((v === 'presente' || (v === undefined && lista.length)) ? lista : []);
+      d[k].forEach(x => usate.add(x));
+    });
+    return { id: String(r.id), plotId: id, schedaId: r.scheda, data: d, stato: r.stato || d._stato || 'bozza', utente: r.rilevatore || a.rilevatore || '',
+      modificato: r.modificato || a.modificato || adesso(), base: r.modificato || '', revisore: r.revisore || '', tentati: [], superata: false, sync: true };
+  });
+  let an = schede.find(s => s.schedaId === 'anagrafica');
+  if (!an) {
+    an = { id: uid('s'), plotId: id, schedaId: 'anagrafica', data: datiDaRigaArea(a), stato: 'bozza', utente: a.rilevatore || '', modificato: a.modificato || adesso(), base: '', tentati: [], sync: true };
+    schede.push(an);
+  }
+  an.data.codice = a.codice || an.data.codice || '';
+  const q = pianificatoPerCodice(a.ads_pianificata) || pianificatoPerCodice(a.codice);
+  const pian = q ? riferimentoPianificato(q) : (a.ads_pianificata && a.lat_pian !== '' && isFinite(+a.lat_pian) ? { ads_id: a.ads_pianificata, lat_pian: +a.lat_pian, lon_pian: +a.lon_pian,
+    x_pian: a.x_pian, y_pian: a.y_pian, strato: a.strato || '', tipologia_forestale: a.tipologia_forestale || '', ruolo: a.ruolo || '', punto_ascolto: +a.punto_ascolto ? 1 : 0, sito_n2000: a.codice_sito || '' } : null);
+  const compl = schede.filter(s => s.stato === 'completata' || s.stato === 'validata').length;
+  const p = { id, codice: an.data.codice, data: JSON.parse(JSON.stringify(an.data)), pianificato: pian,
+    utente: a.rilevatore || S.utente.u, nomeRilevatore: String(a.nome_rilevatore || '').trim(), revisore: a.revisore || '',
+    creato: a.creato || adesso(), modificato: a.modificato || adesso(), base: a.modificato || '', sincronizzato: a.sincronizzato || '', tentati: [], sync: true,
+    stato: compl >= 8 ? 'completata' : 'in corso', schedeCompilate: schede.filter(s => s.schedaId !== 'anagrafica' && s.stato && s.stato !== 'vuota').length,
+    dalFoglio: adesso(), superata: false, superataSchede: [], congelata: (congelate || []).includes(id),
+    supervisione: !!(opt.supervisione && a.rilevatore && a.rilevatore !== S.utente.u) };
+  for (const s of await DB.byIndex('schede', 'plotId', id)) if (!schede.some(x => x.id === s.id)) await DB.del('schede', s.id);
+  for (const s of schede) await DB.put('schede', s);
+  for (const f of Object.values(fotoLoc)) if (!usate.has(f.id)) await DB.del('foto', f.id);
+  for (const s of schede) for (const k of campiFoto(SCHEDE_MAP[s.schedaId])) for (const fid of s.data[k] || []) {
+    const r = fotoRighe[fid], loc = fotoLoc[fid];
+    if (loc && loc.dati) { Object.assign(loc, { sync: true, n: r ? (+r.n || loc.n) : loc.n, schedaId: s.schedaId, campo: k }); await DB.put('foto', loc); }
+    else await DB.put('foto', { id: fid, plotId: id, schedaId: s.schedaId, campo: k, dati: null, remota: true, mancante: !r, n: r ? (+r.n || null) : null,
+      file: r ? r.file : '', byte: r ? (+r.byte || 0) : 0, ts: adesso(), sync: true });
+  }
+  await DB.put('plots', p);
+  return p;
+}
+
+async function ricaricaArea(id) {
+  const p = S.plots.find(x => x.id === id) || S.plot; if (!p) return;
+  if (!navigator.onLine) return avviso('Serve la connessione per ricaricare l\'area dal foglio.');
+  const acc = accessoServizio();
+  if (!acc.token && !acc.chiave) { avviso('Serve il codice squadra: inseriscilo in "Le mie aree sul foglio".'); S.mieErr = 'codice'; return vai('mie'); }
+  if (!p.sync && !confirm(`Su questo telefono ci sono modifiche di ${p.codice || 'quest\'area'} non ancora inviate al foglio: ricaricando l'area andranno perse. Continuare?`)) return;
+  try {
+    avviso('Ricarico ' + (p.codice || 'l\'area') + ' dal foglio…');
+    const o = await chiamaServizio({ azione: 'mie', utente: S.utente.u, nome: S.utente.nome, ids: id, ...acc });
+    const a = (o.aree || []).find(x => String(x.id) === String(id));
+    if (!a) return avviso('Area non trovata sul foglio tra le tue: forse non è mai stata sincronizzata, oppure è di un altro rilevatore.');
+    const doppia = S.plots.find(x => x.id !== a.id && (x.codice || '').toUpperCase() === String(a.codice || '').toUpperCase());
+    if (doppia) return avviso(`Su questo telefono c'è un'altra area ${a.codice}: eliminala prima di ricaricare questa.`);
+    await installaArea(a, o.schede.filter(s => s.id_area === a.id), o.foto.filter(f => f.id_area === a.id), (o.congelate || []).map(String), { supervisione: p.supervisione });
+    await caricaPlots();
+    avviso(`${a.codice}: ricaricata dal foglio.`);
+    return apriPlot(a.id);
+  } catch (e) {
+    if (e.codice === 'codice_squadra') { S.mieErr = 'codice'; avviso('Codice squadra errato o mancante.'); return vai('mie'); }
+    avviso('Area non ricaricata: ' + e.message);
+  }
+}
+
+async function scaricaFotoArea(id, silenzioso) {
+  if (!id) return 0;
+  if (!navigator.onLine) { avviso('Serve la connessione per scaricare le foto.'); return 0; }
+  const remote = (await DB.byIndex('foto', 'plotId', id)).filter(f => f.remota && !f.dati && !f.mancante);
+  const p = S.plots.find(x => x.id === id) || {};
+  if (!remote.length) { if (!silenzioso) avviso('Nessuna foto da scaricare.'); return 0; }
+  const acc = accessoServizio();
+  let ok = 0, ko = 0;
+  for (const f of remote) {
+    try {
+      const o = await chiamaServizio({ azione: 'foto', id: f.id, utente: S.utente.u, nome: S.utente.nome, ...acc });
+      f.dati = 'data:' + (o.tipo || 'image/jpeg') + ';base64,' + o.base64; f.remota = false;
+      await DB.put('foto', f); ok++;
+      if (ok % 4 === 0) avviso(`Foto di ${p.codice || 'quest\'area'}: ${ok} di ${remote.length}…`);
+    } catch (e) { ko++; if (e.codice === 'codice_squadra' || !navigator.onLine) break; }
+  }
+  avviso(`Foto di ${p.codice || 'quest\'area'}: ${ok} scaricate${ko ? `, ${ko} non riuscite (riprova più tardi)` : ''}.`);
+  if (S.plot && S.plot.id === id) { S.fotoRemote = Math.max(0, remote.length - ok); if (S.vista === 'plot' || S.vista === 'scheda') render(); }
+  return ok;
+}
+
+/* amministratore: scarica sul telefono un'area di qualunque rilevatore, dall'archivio, per correggerla */
+async function scaricaDaArchivio(id) {
+  if (!isAdmin()) return;
+  const tok = (S.config.tokenArchivio || '').trim();
+  if (!tok) return avviso('Serve il token di lettura (Impostazioni → Archivio di progetto).');
+  const loc = S.plots.find(p => p.id === id);
+  if (loc && !loc.sync && !confirm(`Su questo telefono ci sono modifiche di ${loc.codice} non ancora inviate: andranno perse. Continuare?`)) return;
+  try {
+    avviso('Scarico l\'area dal foglio…');
+    const o = await chiamaServizio({ azione: 'mie', token: tok, ids: id, utente: S.utente.u });
+    const a = (o.aree || [])[0];
+    if (!a) return avviso('Area non trovata sul foglio.');
+    const doppia = S.plots.find(p => p.id !== a.id && (p.codice || '').toUpperCase() === String(a.codice || '').toUpperCase());
+    if (doppia) return avviso(`Su questo telefono c'è già un'altra area ${a.codice}: eliminala prima.`);
+    await installaArea(a, o.schede || [], o.foto || [], (o.congelate || []).map(String), { supervisione: true });
+    document.querySelectorAll('.modale').forEach(m => m.remove());
+    await caricaPlots();
+    avviso(`${a.codice} scaricata su questo telefono.`);
+    return apriPlot(a.id);
+  } catch (e) { avviso('Area non scaricata: ' + e.message); }
 }
 
 /* ============================== 10. SINCRONIZZAZIONE ==================== */
@@ -1332,34 +1643,66 @@ function log(m) {
   else avviso(m);
 }
 
+/* v1.7 — sincronizzazione con protezione contro le sovrascritture. Ogni area e scheda invia la "base" (versione del foglio da
+   cui parte la copia di questo telefono) e i "tentati" (versioni già inviate senza conferma, se la risposta si è persa): il
+   servizio Google (v4.2) non scrive ciò che è stato superato da una versione arrivata da un altro telefono e lo segnala. */
+let sincronizzando = false;
 async function sincronizza(silenzioso) {
+  if (sincronizzando) { if (!silenzioso) avviso('Sincronizzazione già in corso…'); return; }
   if (!S.config.syncUrl) { if (!silenzioso) avviso('Configura prima l\'URL di sincronizzazione in Impostazioni.'); return; }
   if (!navigator.onLine) { if (!silenzioso) avviso('Nessuna connessione: i dati restano in coda sul dispositivo.'); return; }
   const plots = S.plots.filter(p => !p.sync);
   const tutte = await DB.all('schede');
   const schede = tutte.filter(s => !s.sync);
   if (!plots.length && !schede.length) { if (!silenzioso) avviso('Tutto già sincronizzato.'); return; }
+  sincronizzando = true;
+  try { await inviaAlFoglio(plots, tutte, schede, silenzioso); } finally { sincronizzando = false; }
+}
+
+/* numero di ogni foto nuova: la posizione nella scheda, senza riusare il numero di un'altra foto della stessa scheda già sul foglio */
+function numeriFoto(foto, tf, tutte) {
+  const usati = {}, out = {};
+  const chiave = f => f.plotId + '|' + f.schedaId + '|' + f.campo;
+  tf.forEach(r => { if (r.sync && r.n) (usati[chiave(r)] = usati[chiave(r)] || new Set()).add(+r.n); });
+  foto.forEach(f => {
+    const sc = tutte.find(s => s.plotId === f.plotId && s.schedaId === f.schedaId);
+    const arr = sc && sc.data && Array.isArray(sc.data[f.campo]) ? sc.data[f.campo] : [];
+    const u = usati[chiave(f)] = usati[chiave(f)] || new Set();
+    let n = Math.max(1, arr.indexOf(f.id) + 1);
+    if (u.has(n)) n = Math.max(n, ...u) + 1;
+    u.add(n); out[f.id] = n;
+  });
+  return out;
+}
+
+async function inviaAlFoglio(plots, tutte, schede, silenzioso) {
   log(`Invio di ${plots.length} aree di saggio e ${schede.length} schede…`);
-  let foto = [];
-  if (S.config.syncFoto) {
-    const tf = await DB.all('foto');
-    foto = tf.filter(f => !f.sync);
+  let foto = [], tf = [];
+  if (S.config.syncFoto) { tf = await DB.all('foto'); foto = tf.filter(f => !f.sync && f.dati); }
+  // versioni in partenza registrate prima dell'invio: se la risposta si perde, il foglio riconoscerà l'invio come di questo telefono
+  const segna = el => { el.tentati = [...new Set([...(el.tentati || []), el.modificato].filter(Boolean))].slice(-10); };
+  for (const p of plots) { segna(p); await DB.put('plots', p); if (S.plot && S.plot.id === p.id && S.plot !== p) S.plot.tentati = p.tentati; }
+  for (const s of schede) {
+    segna(s); await DB.put('schede', s);
+    const mem = S.schede && S.schede[s.schedaId];
+    if (mem && mem.id === s.id) mem.tentati = s.tentati;   // la scheda aperta non deve perdere i tentati al prossimo salvataggio
   }
   const codici = {};
   S.plots.forEach(p => { codici[p.id] = p.codice; });
+  const numeri = numeriFoto(foto, tf, tutte);
+  const inviatiP = plots.map(p => ({ ...p, base: p.base || '', nomeRilevatore: p.nomeRilevatore || '', revisore: p.revisore || '' }));
+  const inviatiS = schede.map(s => ({ ...s, base: s.base || '', revisore: s.revisore || '', indicatore: calcolaPerSync(s, tutte) }));
   const payload = {
-    versione: 2, codici, dispositivo: navigator.userAgent.slice(0, 80),
+    versione: 3, codici, dispositivo: navigator.userAgent.slice(0, 80),
     utente: S.utente.u, nomeUtente: S.utente.nome, progetto: S.config.progetto,
     inviato: adesso(),
-    plots: plots.map(p => ({ ...p })),
-    schede: schede.map(s => ({ ...s, indicatore: calcolaPerSync(s) })),
+    plots: inviatiP,
+    schede: inviatiS,
     foto: foto.map(f => {
       const pl = S.plots.find(p => p.id === f.plotId) || {};
-      const sc = tutte.find(s => s.plotId === f.plotId && s.schedaId === f.schedaId);
-      const arr = sc && sc.data && Array.isArray(sc.data[f.campo]) ? sc.data[f.campo] : [];
       const def = SCHEDE_MAP[f.schedaId];
       return { id: f.id, plotId: f.plotId, codice: pl.codice || '', schedaId: f.schedaId, sigla: def ? def.cod : f.schedaId, campo: f.campo,
-        n: Math.max(1, arr.indexOf(f.id) + 1), dati: f.dati };
+        n: numeri[f.id], dati: f.dati };
     })
   };
   try {
@@ -1370,12 +1713,47 @@ async function sincronizza(silenzioso) {
     const txt = await r.text();
     let res; try { res = JSON.parse(txt); } catch (e) { throw new Error('Risposta non valida dal server: ' + txt.slice(0, 120)); }
     if (!res.ok) throw new Error(res.errore || 'Errore lato server');
-    for (const p of plots) { p.sync = true; p.sincronizzato = adesso(); await DB.put('plots', p); }
-    for (const s of schede) { s.sync = true; await DB.put('schede', s); }
-    for (const f of foto) { const ff = await DB.get('foto', f.id); if (ff) { ff.sync = true; await DB.put('foto', ff); } }
+    const sup = res.superate || { aree: [], schede: [] };
+    const supA = new Set((sup.aree || []).map(String)), supS = new Set((sup.schede || []).map(String));
+    const areeSup = new Set(supA), nomiSup = {};
+    inviatiS.forEach(s => {
+      if (!supS.has(String(s.id))) return;
+      areeSup.add(String(s.plotId));
+      (nomiSup[s.plotId] = nomiSup[s.plotId] || []).push(SCHEDE_MAP[s.schedaId] ? SCHEDE_MAP[s.schedaId].cod : s.schedaId);
+    });
+    // schede: base aggiornata se registrate; "superata" se il foglio ha una versione arrivata da un altro telefono.
+    // Si rilegge dal database: se nel frattempo la scheda è stata modificata resta da sincronizzare.
+    for (const inv of inviatiS) {
+      const s = await DB.get('schede', inv.id); if (!s) continue;
+      if (supS.has(String(inv.id))) s.superata = true; else { s.base = inv.modificato; s.superata = false; }
+      s.tentati = [];
+      if (s.modificato === inv.modificato) s.sync = true;
+      await DB.put('schede', s);
+      const mem = S.schede && S.schede[s.schedaId];
+      if (mem && mem.id === s.id) Object.assign(mem, { base: s.base, superata: s.superata, tentati: [], sync: s.sync });
+    }
+    for (const inv of inviatiP) {
+      const p = S.plots.find(x => x.id === inv.id); if (!p) continue;
+      if (!supA.has(String(inv.id))) p.base = inv.modificato;
+      p.tentati = [];
+      if (p.modificato === inv.modificato) { p.sync = true; p.sincronizzato = adesso(); }
+    }
+    for (const id of new Set([...inviatiP.map(p => String(p.id)), ...inviatiS.map(s => String(s.plotId))])) {
+      const p = S.plots.find(x => String(x.id) === id); if (!p) continue;
+      p.superata = areeSup.has(id); p.superataSchede = nomiSup[id] || [];
+      await DB.put('plots', p);
+      if (S.plot && S.plot.id === p.id && S.plot !== p)
+        Object.assign(S.plot, { base: p.base, tentati: p.tentati, sync: p.sync, sincronizzato: p.sincronizzato, superata: p.superata, superataSchede: p.superataSchede });
+    }
+    for (const f of foto) {
+      const ff = await DB.get('foto', f.id);
+      if (ff) { ff.sync = true; ff.n = (res.numeri && res.numeri[f.id]) || numeri[f.id]; await DB.put('foto', ff); }
+    }
     await caricaPlots();
-    log(`Sincronizzazione completata: ${res.righe || schede.length} righe registrate.`);
-    avviso('Sincronizzazione completata.');
+    const cod = [...areeSup].map(id => (S.plots.find(p => String(p.id) === id) || {}).codice).filter(Boolean);
+    log(`Sincronizzazione completata: ${res.righe || schede.length} righe registrate${cod.length ? `; superate da versioni di altri telefoni: ${cod.join(', ')}` : ''}.`);
+    if (cod.length) avviso(`Attenzione: sul foglio c'è una versione più recente di ${cod.join(', ')} (da un altro telefono). Apri l'area e premi ↻ Ricarica dal foglio.`);
+    else avviso('Sincronizzazione completata.');
     if (S.vista !== 'scheda') render();
   } catch (e) {
     log('Errore di sincronizzazione: ' + e.message);
@@ -1383,12 +1761,14 @@ async function sincronizza(silenzioso) {
   }
 }
 
-function calcolaPerSync(s) {
+function calcolaPerSync(s, tutte) {
   const sc = SCHEDE_MAP[s.schedaId]; if (!sc || !sc.calcolo) return null;
   const plot = S.plots.find(p => p.id === s.plotId);
   const pSalvato = S.plot, schSalvate = S.schede;
   S.plot = plot || S.plot;
-  try { const r = sc.calcolo(s.data || {}, (plot && plot.data) || {}); return { valore: r.valore, unita: r.unita, dettagli: r.dettagli }; }
+  // v1.7: le schede della STESSA area (F5 somma il carbonio di F1/F2; F3, F6 e F7 possono usare le piante di F5)
+  if (tutte) { S.schede = {}; tutte.filter(x => x.plotId === s.plotId).forEach(x => { S.schede[x.schedaId] = x; }); }
+  try { const r = calcolaScheda(sc, s); return { valore: r.valore, unita: r.unita, dettagli: r.dettagli }; }
   catch (e) { return null; }
   finally { S.plot = pSalvato; S.schede = schSalvate; }
 }

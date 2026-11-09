@@ -1,7 +1,7 @@
 /* Service worker — NRL Rilievi
    Strategia: cache-first sui file dell'applicazione (l'app deve funzionare
    integralmente senza rete), network-first sulle richieste di sincronizzazione. */
-const CACHE = 'nrl-rilievi-v8';   // v1.6: archivio di progetto
+const CACHE = 'nrl-rilievi-v9';   // v1.7: le mie aree sul foglio
 const FILE = [
   './', './index.html', './dati.js', './schede.js', './app.js',
   './manifest.webmanifest', './icon-192.png', './icon-512.png'
