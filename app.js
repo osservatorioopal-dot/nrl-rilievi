@@ -66,14 +66,16 @@ const CONFIG_PREDEFINITA = {
   syncUrl: SYNC_URL_PREDEFINITO,
   progetto: '',
   autoSync: true,
-  syncFoto: true
+  syncFoto: true,
+  tokenArchivio: ''      // v1.6: token di lettura del foglio per l'Archivio di progetto (lo inserisce l'amministratore)
 };
 
 /* ============================== 2b. STATO =============================== */
 const S = {
   utente: null, utenti: [], coeff: { ...COEFF_DEFAULT }, config: {},
   plots: [], plot: null, schede: {}, vista: 'login', dirty: false,
-  pianificati: [], pianificatiAgg: null, ultimaPos: null, adsRichiesta: null, mostraPianificati: true, codiceManuale: false
+  pianificati: [], pianificatiAgg: null, ultimaPos: null, adsRichiesta: null, mostraPianificati: true, codiceManuale: false,
+  archivio: null, archFiltro: { q: '', ril: '', strato: '', stato: '' }   // v1.6: archivio di progetto (dati di tutti i rilevatori, solo amministratore)
 };
 /* File dei punti di campionamento pianificati (stessa cartella dell'app, generato dal progetto QGIS) */
 const FILE_PIANIFICATI = 'punti_pianificati.geojson';
@@ -108,6 +110,7 @@ async function avvio() {
   await caricaPlots();
   S.pianificati = (await DB.get('kv', 'pianificati')) || [];
   S.pianificatiAgg = (await DB.get('kv', 'pianificatiAgg')) || null;
+  S.archivio = (await DB.get('kv', 'archivio')) || null;
   // apertura diretta di un'area di saggio da QField (…/?ads=GM-LEC-01)
   try {
     const qs = new URLSearchParams(location.search);
@@ -149,6 +152,7 @@ function render() {
     case 'scheda': html = vistaScheda(); break;
     case 'impostazioni': html = isAdmin() ? vistaImpostazioni() : vistaHome(); break;
     case 'riepilogo': html = vistaRiepilogoProgetto(); break;
+    case 'archivio': html = isAdmin() ? vistaArchivio() : vistaHome(); break;
     default: html = vistaHome();
   }
   app.innerHTML = intestazione() + html;
@@ -164,7 +168,7 @@ function intestazione() {
     <div class="top-r">
       <span id="rete" class="rete">●</span>
       <button class="ico" data-a="sync" title="Sincronizza">⟳${pend ? `<b>${pend}</b>` : ''}</button>
-      ${isAdmin() ? '<button class="ico" data-a="impostazioni" title="Impostazioni">⚙</button>' : '<button class="ico" data-a="diventa-admin" title="Codice amministratore">🔑</button>'}
+      ${isAdmin() ? '<button class="ico" data-a="archivio" title="Archivio di progetto: i dati di tutti i rilevatori">📋</button><button class="ico" data-a="impostazioni" title="Impostazioni">⚙</button>' : '<button class="ico" data-a="diventa-admin" title="Codice amministratore">🔑</button>'}
       <button class="ico" data-a="logout" title="Esci">⏻</button>
     </div></header>`;
 }
@@ -625,7 +629,12 @@ function bind() {
     ev.stopPropagation(); azione(el.dataset.a, el.dataset.id, el);
   });
   const cerca = document.getElementById('cerca');
-  if (cerca) cerca.oninput = e => { S.filtro = e.target.value; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  if (cerca) cerca.oninput = e => { S.filtro = e.target.value; const y = window.scrollY; render(); window.scrollTo(0, y); const n = document.getElementById('cerca'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };   // v1.6: la tastiera resta aperta mentre si cerca
+  app.querySelectorAll('[data-archf]').forEach(el => {
+    const k = el.dataset.archf;
+    const h = () => { S.archFiltro[k] = el.value; const y = window.scrollY; render(); window.scrollTo(0, y); const n = document.querySelector(`[data-archf="${k}"]`); if (n && n.tagName === 'INPUT') { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } };
+    if (el.tagName === 'INPUT') el.oninput = h; else el.onchange = h;
+  });
 
   app.querySelectorAll('[data-f]').forEach(el => {
     const k = el.dataset.f;
@@ -818,6 +827,11 @@ async function azione(a, id, el) {
       <label>Codice<input id="adm-code" type="password" autocomplete="off"></label><div class="azioni"><button class="primario" data-a="conferma-admin">Conferma</button></div><p class="err" id="adm-err"></p>`);
     case 'conferma-admin': return confermaAdmin();
     case 'riepilogo': return vai('riepilogo');
+    case 'archivio': if (!isAdmin()) return avviso('L\'archivio di progetto è riservato all\'amministratore.'); return vai('archivio');
+    case 'arch-agg': return aggiornaArchivio();
+    case 'arch-apri': return modaleArchivioArea(id);
+    case 'arch-csv': return esportaArchivioCsv();
+    case 'arch-azzera-filtri': S.archFiltro = { q: '', ril: '', strato: '', stato: '' }; return render();
     case 'sync': return sincronizza(false);
     case 'nuovo-plot': return nuovoPlot();
     case 'crea-da-pian': return apriAdsCodice(id);
@@ -1078,6 +1092,12 @@ function vistaImpostazioni() {
     <div class="azioni"><button class="primario" data-a="salva-config">Salva</button><button data-a="test-sync">Prova la connessione</button><button data-a="sync">Sincronizza ora</button></div>
     <div id="sync-log" class="log"></div>
   </div>
+  <div class="card"><h2>Archivio di progetto (amministratore)</h2>
+    <p class="muted small">L'archivio mostra in sola lettura le aree di saggio e le schede di <b>tutti i rilevatori</b>, scaricate dal foglio Google del progetto.
+      Serve il token di lettura del foglio (lo stesso usato dal progetto QGIS): resta salvato solo su questo dispositivo.</p>
+    <label>Token di lettura dell'archivio<input id="c-token" type="password" autocomplete="off" value="${esc(S.config.tokenArchivio || '')}" placeholder="token di lettura (vedi documentazione di progetto)"></label>
+    <div class="azioni"><button class="primario" data-a="salva-config">Salva</button><button data-a="archivio">Apri l'archivio</button></div>
+  </div>
   <div class="card"><h2>Utenti</h2>
     <p class="muted small">Le utenze sono locali al dispositivo e servono a identificare il rilevatore anche senza connessione. I rilevatori compilano e sincronizzano le schede ed
       eliminano solo le proprie aree di saggio; le impostazioni, i coefficienti, gli utenti e i backup sono dell'amministratore (utenza promossa con il codice del responsabile, tasto 🔑).</p>
@@ -1113,7 +1133,7 @@ function vistaImpostazioni() {
       <button class="pericolo" data-a="reset-app">Cancella tutti i dati locali</button>
     </div>
     <input type="file" id="file-backup" accept=".json" hidden>
-    <p class="muted small">Versione app 1.5 (ruoli: amministratore con codice, rilevatori senza impostazioni; specie delle gravine e ripariali; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
+    <p class="muted small">Versione app 1.6 (archivio di progetto per l'amministratore con i dati di tutti i rilevatori; ruoli con codice amministratore; specie delle gravine e ripariali; foto con codice AdS; valori del capitolato BRM-CAP-02) · schede conformi all'Allegato VI del Reg. (UE) 2024/1991</p>
   </div></div>`;
 }
 
@@ -1122,6 +1142,7 @@ async function salvaConfig() {
   S.config.progetto = val('c-prog').trim();
   S.config.autoSync = document.getElementById('c-auto').checked;
   S.config.syncFoto = document.getElementById('c-foto').checked;
+  if (document.getElementById('c-token')) S.config.tokenArchivio = val('c-token').trim();
   await DB.put('kv', S.config, 'config'); avviso('Impostazioni salvate.');
 }
 async function nuovoUtente() {
@@ -1146,6 +1167,152 @@ async function resetApp() {
   if (!confirm('Confermi definitivamente?')) return;
   for (const s of ['plots', 'schede', 'foto', 'kv']) await DB.clear(s);
   sessionStorage.clear(); location.reload();
+}
+
+
+/* ============================== 9b. ARCHIVIO DI PROGETTO (v1.6) ========
+   Vista in sola lettura, riservata all'amministratore, con le aree di saggio, le schede
+   e le foto di TUTTI i rilevatori: i dati vengono scaricati dal foglio Google tramite
+   l'esportazione JSON del servizio Apps Script (?formato=json&foglio=…&token=…), lo stesso
+   canale che usa il progetto QGIS. L'ultimo scaricamento resta sul dispositivo (kv 'archivio'). */
+const ARCH_FOGLI = ['Aree_di_saggio', 'Schede', 'Foto'];
+const ARCH_COLONNE_PESANTI = { Schede: ['dati_json', 'dettagli_calcolo'] };   // non servono alla vista: si scartano per alleggerire la memoria
+
+async function scaricaFoglio(nome, token) {
+  const url = S.config.syncUrl + '?formato=json&foglio=' + encodeURIComponent(nome) + '&token=' + encodeURIComponent(token) + '&_=' + Date.now();
+  const r = await fetch(url, { method: 'GET', cache: 'no-store' });
+  const txt = await r.text();
+  let o; try { o = JSON.parse(txt); } catch (e) { throw new Error(txt.indexOf('token') >= 0 ? 'token di lettura non valido' : 'risposta non valida per ' + nome + ': ' + txt.slice(0, 80)); }
+  if (!o.ok) throw new Error(o.errore || ('errore del servizio per ' + nome));
+  const int = o.intestazioni || [], scarta = new Set(ARCH_COLONNE_PESANTI[nome] || []);
+  return (o.righe || []).map(riga => { const ob = {}; int.forEach((k, i) => { if (k && !scarta.has(k)) ob[k] = riga[i]; }); return ob; })
+    .filter(ob => Object.values(ob).some(v => v !== '' && v != null));
+}
+
+async function aggiornaArchivio() {
+  if (!isAdmin()) return avviso('Funzione riservata all\'amministratore.');
+  if (!navigator.onLine) return avviso('Nessuna connessione: resta l\'ultimo archivio scaricato.');
+  const token = (S.config.tokenArchivio || '').trim();
+  if (!token) return avviso('Inserisci il token di lettura in Impostazioni → Archivio di progetto.');
+  avviso('Scarico l\'archivio dal foglio Google…');
+  try {
+    const [aree, schede, foto] = [await scaricaFoglio('Aree_di_saggio', token), await scaricaFoglio('Schede', token), await scaricaFoglio('Foto', token)];
+    S.archivio = { scaricato: adesso(), aree, schede, foto };
+    await DB.put('kv', S.archivio, 'archivio');
+    avviso(`Archivio aggiornato: ${aree.length} aree di saggio, ${schede.length} schede, ${foto.length} foto.`);
+    if (S.vista === 'archivio') render();
+  } catch (e) { avviso('Archivio non scaricato: ' + e.message); }
+}
+
+/* indici di comodo sull'archivio scaricato */
+function archIndici() {
+  const A = S.archivio || { aree: [], schede: [], foto: [] };
+  const schedePerArea = {}, fotoPerCodice = {}, perCodice = {};
+  (A.schede || []).forEach(s => { (schedePerArea[s.id_area] = schedePerArea[s.id_area] || []).push(s); });
+  (A.foto || []).forEach(f => { const c = String(f.codice || '').toUpperCase(); fotoPerCodice[c] = (fotoPerCodice[c] || 0) + 1; });
+  (A.aree || []).forEach(a => { const c = String(a.codice || '').toUpperCase(); (perCodice[c] = perCodice[c] || []).push(a); });
+  return { A, schedePerArea, fotoPerCodice, perCodice };
+}
+const archStrato = a => String(a.strato || (String(a.codice || '').match(/^[A-Z]{2}-[A-Z]{3}/) || [''])[0]);
+const archCompletate = ss => ss.filter(s => s.stato === 'completata' || s.stato === 'validata').length;
+const archData = v => { const s = String(v || ''); return s.length >= 10 ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : s; };
+const archNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
+
+function vistaArchivio() {
+  const back = `<button class="link" data-a="home">← Aree di saggio</button>`;
+  if (!(S.config.tokenArchivio || '').trim()) return `<div class="wrap">${back}
+    <div class="card"><h2>Archivio di progetto</h2>
+      <p class="muted">Qui l'amministratore vede, in sola lettura, le aree di saggio e le schede di tutti i rilevatori registrate sul foglio Google del progetto.</p>
+      <div class="nota">Per attivarlo inserisci il token di lettura del foglio in <b>Impostazioni → Archivio di progetto</b> (è lo stesso token che usa il progetto QGIS).</div>
+      <div class="azioni"><button class="primario" data-a="impostazioni">Vai alle impostazioni</button></div></div></div>`;
+  const { A, schedePerArea, fotoPerCodice, perCodice } = archIndici();
+  if (!A.aree || !A.aree.length) return `<div class="wrap">${back}
+    <div class="card"><h2>Archivio di progetto</h2>
+      <p class="muted">Nessun dato ancora scaricato${A.scaricato ? ' (ultimo tentativo ' + new Date(A.scaricato).toLocaleString('it-IT') + ')' : ''}. Con la rete attiva premi <b>Aggiorna dal foglio</b>: vengono letti i fogli Aree_di_saggio, Schede e Foto.</p>
+      <div class="azioni"><button class="primario" data-a="arch-agg">Aggiorna dal foglio</button></div></div></div>`;
+  const F = S.archFiltro, q = (F.q || '').toLowerCase();
+  const aree = A.aree.map(a => {
+    const ss = schedePerArea[a.id] || [];
+    const nComp = archCompletate(ss), nTot = ss.length;
+    const cod = String(a.codice || '').toUpperCase();
+    return { ...a, _cod: cod, _strato: archStrato(a), _ss: ss, _nComp: nComp, _nTot: nTot, _foto: fotoPerCodice[cod] || 0,
+      _vuota: nTot <= 1 && !ss.some(s => s.scheda !== 'anagrafica'), _doppio: (perCodice[cod] || []).length > 1,
+      _ril: String(a.nome_rilevatore || a.rilevatore || '—').trim() || '—', _stato: String(a.stato || '—').trim(), _scost: archNum(a.scostamento_m),
+      _locale: S.plots.some(p => p.id === a.id) };
+  });
+  const rilevatori = [...new Set(aree.map(a => a._ril))].sort((x, y) => x.localeCompare(y));
+  const strati = [...new Set(aree.map(a => a._strato).filter(Boolean))].sort();
+  const stati = [...new Set(aree.map(a => a._stato))].sort();
+  let lista = aree.filter(a => (!F.ril || a._ril === F.ril) && (!F.strato || a._strato === F.strato) && (!F.stato || a._stato === F.stato)
+    && (!q || `${a.codice} ${a.comune || ''} ${a.localita || ''} ${a._ril}`.toLowerCase().includes(q)));
+  lista.sort((x, y) => String(x.codice).localeCompare(String(y.codice)));
+  const completate = aree.filter(a => a._stato === 'completata').length, vuote = aree.filter(a => a._vuota).length, doppi = [...new Set(aree.filter(a => a._doppio).map(a => a._cod))];
+  // pianificate non ancora nel foglio (per strato)
+  const codiciArchivio = new Set(aree.filter(a => !a._vuota).map(a => a._cod));
+  const mancanti = S.pianificati.filter(f => f.ruolo !== 'riserva' && f.ruolo !== 'opzionale' && !codiciArchivio.has(String(f.ads_id).toUpperCase()));
+  const perStrato = {}; mancanti.forEach(f => { (perStrato[f.strato || '?'] = perStrato[f.strato || '?'] || []).push(String(f.ads_id).replace(/^[A-Z]{2}-[A-Z]{3}-/, '')); });
+  const riepRil = rilevatori.map(r => { const mie = aree.filter(a => a._ril === r && !a._vuota); const ultima = mie.map(a => String(a.data || '')).sort().pop() || '';
+    return `<tr><td>${esc(r)}</td><td>${mie.length}</td><td>${mie.filter(a => a._stato === 'completata').length}</td><td>${esc(archData(ultima))}</td></tr>`; }).join('');
+  const righe = lista.map(a => `<tr class="arch-r" data-a="arch-apri" data-id="${esc(a.id)}">
+      <td><b>${esc(a.codice || '—')}</b>${a._doppio ? ' <span class="badge err">doppio</span>' : ''}${a._vuota ? ' <span class="badge warn">vuota</span>' : ''}${a._locale ? ' <span class="badge">qui</span>' : ''}<div class="muted small">${esc(a._strato)}${a.comune ? ' · ' + esc(a.comune) : ''}</div></td>
+      <td>${esc(a._ril)}<div class="muted small">${esc(archData(a.data))}</div></td>
+      <td><span class="badge ${a._stato === 'completata' ? 'ok' : (a._stato === 'in corso' ? 'warn' : '')}">${esc(a._stato)}</span><div class="muted small">${a._nComp}/${a._nTot} schede · ${a._foto} foto</div></td>
+      <td class="num">${a._scost != null ? Math.round(a._scost) : '—'}</td></tr>`).join('');
+  return `<div class="wrap">${back}
+    <div class="card"><div class="plot-h"><div><h2>Archivio di progetto</h2>
+        <div class="muted small">Dati di tutti i rilevatori dal foglio Google · scaricati il ${new Date(A.scaricato).toLocaleString('it-IT')}</div></div>
+      <div class="azioni" style="margin:0"><button class="primario" data-a="arch-agg">Aggiorna dal foglio</button><button data-a="arch-csv">CSV</button></div></div>
+      <div class="stats">
+        <div class="stat"><b>${aree.length - vuote}</b><span>aree nel foglio</span></div>
+        <div class="stat"><b>${completate}</b><span>completate</span></div>
+        <div class="stat"><b>${rilevatori.length}</b><span>rilevatori</span></div>
+        <div class="stat"><b>${S.pianificati.length ? mancanti.length : '—'}</b><span>pianificate da fare</span></div>
+      </div>
+      ${doppi.length || vuote ? `<div class="nota">${doppi.length ? `Codici presenti più volte nel foglio: <b>${esc(doppi.join(', '))}</b>. ` : ''}${vuote ? `${vuote} ${vuote === 1 ? 'area vuota (sola anagrafica in bozza)' : 'aree vuote (sola anagrafica in bozza)'}: non contano come rilevate.` : ''}</div>` : ''}
+    </div>
+    ${S.pianificati.length ? `<div class="card"><h3>Pianificate non ancora nel foglio (${mancanti.length})</h3>
+      ${Object.keys(perStrato).sort().map(st => `<div class="small"><b>${esc(st)}</b> (${perStrato[st].length}): ${esc(perStrato[st].sort().join(', '))}</div>`).join('') || '<div class="muted small">Tutte le aree pianificate principali hanno un rilievo nel foglio.</div>'}
+      <div class="muted small" style="margin-top:6px">Riserve e punti opzionali non sono conteggiati. Confronto fatto sui codici del piano caricato in questo dispositivo (${S.pianificati.length} punti).</div></div>` : ''}
+    <div class="card"><h3>Per rilevatore</h3>
+      <table class="riep"><thead><tr><th>Rilevatore</th><th>AdS</th><th>Completate</th><th>Ultimo rilievo</th></tr></thead><tbody>${riepRil}</tbody></table></div>
+    <div class="card">
+      <div class="arch-filtri">
+        <input data-archf="q" class="cerca" placeholder="Cerca codice, comune, rilevatore…" value="${esc(F.q || '')}">
+        <select data-archf="ril"><option value="">Tutti i rilevatori</option>${rilevatori.map(r => `<option ${F.ril === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select>
+        <select data-archf="strato"><option value="">Tutti gli strati</option>${strati.map(s => `<option ${F.strato === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+        <select data-archf="stato"><option value="">Tutti gli stati</option>${stati.map(s => `<option ${F.stato === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+      </div>
+      <div class="muted small">${lista.length} aree${(F.q || F.ril || F.strato || F.stato) ? ` (filtrate su ${aree.length}) · <button class="link" data-a="arch-azzera-filtri">azzera filtri</button>` : ''} · tocca una riga per le schede</div>
+      <div class="tab-scroll"><table class="riep arch"><thead><tr><th>Codice</th><th>Rilevatore</th><th>Stato e schede</th><th class="num">Scost. m</th></tr></thead><tbody>${righe || '<tr><td colspan="4" class="muted">Nessuna area con questi filtri.</td></tr>'}</tbody></table></div>
+    </div>
+    <p class="muted small">Sola lettura: le correzioni si fanno sul telefono che ha creato l'area (o sul foglio Google). "qui" = area presente anche su questo dispositivo; "Scost. m" = distanza in metri del centro rilevato dal punto pianificato (sui telefoni stretti è visibile aprendo l'area).</p>
+  </div>`;
+}
+
+function modaleArchivioArea(id) {
+  const { A, schedePerArea, fotoPerCodice } = archIndici();
+  const a = (A.aree || []).find(x => x.id === id); if (!a) return;
+  const ss = (schedePerArea[id] || []).slice().sort((x, y) => String(x.scheda).localeCompare(String(y.scheda)));
+  const lat = archNum(a.lat), lon = archNum(a.lon);
+  const righe = ss.map(s => { const def = SCHEDE_MAP[s.scheda]; const nome = def ? def.nome : (s.nome_scheda || s.scheda);
+    const val = s.valore_indicatore !== '' && s.valore_indicatore != null ? `<b>${esc(s.valore_indicatore)}</b> ${esc(s.unita || '')}` : '<span class="muted">—</span>';
+    return `<tr><td>${def ? esc(def.cod) : esc(s.scheda)}</td><td>${esc(nome)}<div class="muted small">${esc(s.rilevatore || '')}${s.modificato ? ' · ' + esc(archData(s.modificato)) : ''}</div></td><td><span class="badge ${s.stato === 'completata' || s.stato === 'validata' ? 'ok' : 'warn'}">${esc(s.stato || '')}</span></td><td>${val}</td></tr>`; }).join('');
+  modale(`${esc(a.codice || 'senza codice')} — ${esc(a.nome_rilevatore || a.rilevatore || '')}`,
+    `<div class="small">${esc(a.comune || '')}${a.localita ? ' · ' + esc(a.localita) : ''} · ${esc(archData(a.data))} · stato <b>${esc(a.stato || '—')}</b>
+      ${a.strato ? `<br>strato ${esc(a.strato)}${a.ruolo ? ' · ' + esc(a.ruolo) : ''}${a.ads_pianificata && a.ads_pianificata !== a.codice ? ' · pianificata come ' + esc(a.ads_pianificata) : ''}` : ''}
+      ${lat != null && lon != null ? `<br>📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}${a.precisione_m ? ' (±' + Math.round(archNum(a.precisione_m)) + ' m)' : ''}${archNum(a.scostamento_m) != null ? ' · ' + Math.round(archNum(a.scostamento_m)) + ' m dal punto pianificato' : ''} <a class="btn-link" href="geo:${lat},${lon}?q=${lat},${lon}(${encodeURIComponent(a.codice || '')})">🧭</a>` : '<br><span class="muted">senza posizione GPS nel foglio</span>'}
+      <br><span class="muted">creata ${esc(archData(a.creato))} · modificata ${esc(archData(a.modificato))} · sincronizzata ${esc(archData(a.sincronizzato))} · foto nel foglio: ${fotoPerCodice[String(a.codice || '').toUpperCase()] || 0}</span></div>
+     <table class="riep" style="margin-top:8px"><thead><tr><th>Cod.</th><th>Scheda</th><th>Stato</th><th>Valore</th></tr></thead><tbody>${righe || '<tr><td colspan="4" class="muted">Nessuna scheda nel foglio per questa area.</td></tr>'}</tbody></table>
+     <p class="muted small">Dati del foglio Google al ${new Date(A.scaricato).toLocaleString('it-IT')}; le modifiche si fanno dal dispositivo che ha creato l'area.</p>`);
+}
+
+function esportaArchivioCsv() {
+  const { A, schedePerArea, fotoPerCodice } = archIndici();
+  if (!A.aree || !A.aree.length) return avviso('Nessun archivio da esportare.');
+  const col = ['codice', 'strato', 'ruolo', 'ads_pianificata', 'nome_rilevatore', 'rilevatore', 'data', 'stato', 'schede_completate', 'schede_totali', 'foto', 'comune', 'localita', 'lat', 'lon', 'precisione_m', 'scostamento_m', 'creato', 'modificato', 'sincronizzato', 'id'];
+  const righe = A.aree.map(a => { const ss = schedePerArea[a.id] || []; const r = { ...a, strato: archStrato(a), schede_completate: archCompletate(ss), schede_totali: ss.length, foto: fotoPerCodice[String(a.codice || '').toUpperCase()] || 0 };
+    return col.map(k => csvCell(r[k])).join(';'); });
+  scarica(`archivio_progetto_${oggi()}.csv`, '﻿' + [col.map(csvCell).join(';'), ...righe].join('\n'), 'text/csv');
 }
 
 /* ============================== 10. SINCRONIZZAZIONE ==================== */

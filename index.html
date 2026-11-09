@@ -185,6 +185,19 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:5px;font-size:.85em}
 .modale-c{padding:14px}
 @media(min-width:640px){.modale{align-items:center}.modale-box{border-radius:16px}.riga-b.aperta{grid-template-columns:1fr 1fr 1fr}.cella.w3{grid-column:span 3}}
 @media print{.top,.azioni,.fondo,.link{display:none}.card{break-inside:avoid;box-shadow:none}}
+
+/* v1.6 archivio di progetto */
+.arch-filtri{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.arch-filtri .cerca{grid-column:1/-1}
+.arch-filtri select{padding:9px 10px;font-size:14px;min-width:0}
+.tab-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.riep.arch{table-layout:fixed;min-width:300px}
+.riep.arch td,.riep.arch th{padding:7px 5px;font-size:.84rem;vertical-align:top;overflow-wrap:anywhere}
+.riep.arch th.num,.riep.arch td.num{text-align:right;white-space:nowrap;width:5.6em}
+.riep.arch tr.arch-r{cursor:pointer}
+.riep.arch tr.arch-r:active{background:#f1f5f9}
+.riep.arch .badge{display:inline-block;margin-bottom:2px}
+@media(max-width:480px){.riep.arch th.num,.riep.arch td.num{display:none}.top .ico{width:33px;height:34px;font-size:1rem}}
 </style>
 </head>
 <body>
